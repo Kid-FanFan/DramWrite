@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useProjectStore } from '../../stores/projectStore'
-import { Send, Sparkles, RotateCcw, MessageSquare, ListTodo, Info } from 'lucide-react'
+import { Send, Sparkles, Lightbulb, ChevronDown, ChevronUp, CheckCircle2, Circle } from 'lucide-react'
 import type { Message, Option } from '../../types'
 
 // 真实 API 调用（非流式）
@@ -32,15 +32,6 @@ const chatAPIStream = (
     onDone: () => void
   }
 ): (() => void) => {
-  const eventSource = new EventSource(`/api/v1/projects/${projectId}/chat/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message, type: 'text' }),
-  } as any)
-
-  // 使用 fetch 实现 POST 方式的 SSE
   const abortController = new AbortController()
 
   fetch(`/api/v1/projects/${projectId}/chat/stream`, {
@@ -100,6 +91,16 @@ const chatAPIStream = (
   return () => abortController.abort()
 }
 
+// 需求字段配置
+const REQUIREMENT_FIELDS = [
+  { key: 'genre', label: '题材类型', icon: '🎭' },
+  { key: 'protagonist', label: '主角设定', icon: '👤' },
+  { key: 'conflict', label: '核心冲突', icon: '⚔️' },
+  { key: 'target_audience', label: '目标受众', icon: '👥' },
+  { key: 'episodes', label: '集数', icon: '📺' },
+  { key: 'style', label: '风格基调', icon: '🎨' },
+]
+
 function ClarifyPage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
@@ -109,9 +110,10 @@ function ClarifyPage() {
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
+  const [showProgressPanel, setShowProgressPanel] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // 页面加载时从后端获取完整项目数据（包含消息历史）
+  // 页面加载时从后端获取完整项目数据
   useEffect(() => {
     if (id) {
       console.log('[ClarifyPage] Loading project:', id)
@@ -146,6 +148,18 @@ function ClarifyPage() {
     )
   }
 
+  // 获取已完成的需求字段
+  const getCompletedFields = () => {
+    const requirements = project.requirements || {}
+    return REQUIREMENT_FIELDS.map(field => ({
+      ...field,
+      completed: !!(requirements[field.key])
+    }))
+  }
+
+  const completedFields = getCompletedFields()
+  const completedCount = completedFields.filter(f => f.completed).length
+
   // 是否使用流式输出
   const useStreaming = true
 
@@ -165,36 +179,33 @@ function ClarifyPage() {
 
     if (useStreaming) {
       // 流式输出模式
-      let tempMessageId: string | null = null
-
       chatAPIStream(project.id, message, {
         onContent: (content, isComplete) => {
-          if (!tempMessageId) {
-            // 首次收到内容，添加临时消息
-            tempMessageId = `msg_${Date.now()}`
-            addMessage(project.id, {
-              role: 'assistant',
-              content: content,
-              type: 'text'
-            })
-          } else {
-            // 更新已有消息内容
-            const currentProject = getProject(project.id)
-            if (currentProject) {
-              const messages = [...currentProject.messages]
-              const lastMsg = messages[messages.length - 1]
-              if (lastMsg && lastMsg.role === 'assistant') {
-                messages[messages.length - 1] = {
-                  ...lastMsg,
-                  content: content
-                }
-                updateProject(project.id, { messages })
+          const currentProject = getProject(project.id)
+          if (currentProject) {
+            const messages = [...currentProject.messages]
+            const lastMsg = messages[messages.length - 1]
+
+            if (lastMsg && lastMsg.role === 'assistant') {
+              // 更新已有消息内容
+              messages[messages.length - 1] = {
+                ...lastMsg,
+                content: content
               }
+            } else {
+              // 添加新的助手消息
+              messages.push({
+                id: `msg_${Date.now()}`,
+                role: 'assistant',
+                content: content,
+                type: 'text',
+                createdAt: new Date().toISOString()
+              })
             }
+            updateProject(project.id, { messages })
           }
         },
         onMetadata: (metadata) => {
-          // 更新项目完整度
           if (metadata.completeness !== undefined) {
             updateProject(project.id, {
               completeness: metadata.completeness,
@@ -216,23 +227,20 @@ function ClarifyPage() {
         }
       })
     } else {
-      // 非流式模式（原有逻辑）
+      // 非流式模式
       try {
         const response = await chatAPI(project.id, message)
 
         if (response.code === 200) {
           const { data } = response
 
-          // 检查 LLM 是否未配置
           if (data.llm_not_configured) {
-            // 添加错误消息
             addMessage(project.id, {
               role: 'assistant',
               content: data.content,
               type: 'error'
             })
           } else {
-            // 添加助手消息
             addMessage(project.id, {
               role: 'assistant',
               content: data.content,
@@ -240,7 +248,6 @@ function ClarifyPage() {
               options: data.options
             })
 
-            // 更新项目完整度
             if (data.completeness !== undefined) {
               updateProject(project.id, {
                 completeness: data.completeness,
@@ -251,7 +258,6 @@ function ClarifyPage() {
         }
       } catch (error) {
         console.error('发送消息失败:', error)
-        // 添加错误提示
         addMessage(project.id, {
           role: 'assistant',
           content: '服务调用失败，请检查后端是否正常运行',
@@ -272,7 +278,7 @@ function ClarifyPage() {
 
   const handleOptionClick = (option: Option) => {
     setInputMessage(option.title)
-    handleSendMessage()
+    setTimeout(() => handleSendMessage(), 0)
   }
 
   const handleAutoFill = () => {
@@ -285,221 +291,213 @@ function ClarifyPage() {
     handleSendMessage()
   }
 
-  // 需求澄清阶段不直接显示已确认的需求项
-  // 需求确认书将在确认页面由大模型汇总优化后展示
-
   return (
-    <div className="h-[calc(100vh-140px)]">
-      <div className="card h-full flex flex-col">
-        {/* 头部 */}
-        <div className="flex items-center justify-between mb-4 pb-4 border-b">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold">{project.name}</h2>
-            <span className="text-sm text-gray-500">- 需求澄清</span>
-          </div>
+    <div className="h-[calc(100vh-140px)] flex flex-col">
+      {/* 头部 */}
+      <div className="card mb-4 p-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            {/* 进度条 */}
-            <div className="flex items-center gap-2">
-              <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-300"
-                  style={{ width: `${project.completeness}%` }}
-                />
+            <h2 className="text-lg font-semibold">{project.name}</h2>
+            <span className="text-sm text-gray-400">需求澄清</span>
+          </div>
+
+          <div className="flex items-center gap-6">
+            {/* 进度指示器 */}
+            <div className="flex items-center gap-3">
+              <div className="relative w-12 h-12">
+                <svg className="w-12 h-12 transform -rotate-90">
+                  <circle
+                    cx="24"
+                    cy="24"
+                    r="20"
+                    stroke="#e5e7eb"
+                    strokeWidth="4"
+                    fill="none"
+                  />
+                  <circle
+                    cx="24"
+                    cy="24"
+                    r="20"
+                    stroke={project.completeness >= 80 ? '#22c55e' : '#4A90E2'}
+                    strokeWidth="4"
+                    fill="none"
+                    strokeDasharray={`${project.completeness * 1.256} 125.6`}
+                    strokeLinecap="round"
+                    className="transition-all duration-500"
+                  />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-sm font-medium">
+                  {project.completeness}%
+                </span>
               </div>
-              <span className="text-sm text-gray-600">{project.completeness}%</span>
+              <div className="text-sm">
+                <p className="text-gray-600">已收集 <span className="font-medium text-primary">{completedCount}</span>/6 项</p>
+              </div>
             </div>
+
             <button
               type="button"
               disabled={project.completeness < 80}
-              className="btn-primary text-sm disabled:opacity-50"
+              className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => navigate(`/project/${id}/confirm`)}
             >
-              下一步 →
+              {project.completeness >= 80 ? '生成需求确认书 →' : '继续完善需求...'}
             </button>
           </div>
         </div>
+      </div>
 
-        {/* 三栏布局 */}
-        <div className="flex-1 flex gap-4 min-h-0">
-          {/* 左侧 - 对话历史 */}
-          <div className="w-48 border-r pr-4 overflow-y-auto scrollbar-thin hidden lg:block">
-            <h3 className="text-sm font-medium text-gray-500 mb-3 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              对话历史
-            </h3>
-            <div className="space-y-2">
-              {project.messages.map((msg, index) => (
+      {/* 主体区域 */}
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="card flex-1 flex flex-col overflow-hidden">
+          {/* 对话区域 */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {project.messages.map((msg, index) => (
+              <div
+                key={index}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 <div
-                  key={index}
-                  className={`text-sm p-2 rounded cursor-pointer hover:bg-gray-50 ${
-                    msg.role === 'user' ? 'text-primary' : 'text-gray-600'
+                  className={`max-w-[75%] rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-primary text-white rounded-br-md'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-md'
                   }`}
                 >
-                  <span className="text-xs text-gray-400">{msg.role === 'user' ? '你' : '助手'}:</span>
-                  <p className="truncate">{msg.content}</p>
+                  <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+
+                  {/* 选项按钮 */}
+                  {msg.options && msg.options.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {msg.options.map((option) => (
+                        <button
+                          type="button"
+                          key={option.id}
+                          onClick={() => handleOptionClick(option)}
+                          className="w-full text-left p-3 rounded-xl bg-white/80 hover:bg-white border border-gray-200 hover:border-primary/30 transition-all group"
+                        >
+                          <span className="font-medium text-gray-800 group-hover:text-primary">
+                            {option.id}. {option.title}
+                          </span>
+                          {option.description && (
+                            <span className="text-sm text-gray-500 ml-2">- {option.description}</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
           </div>
 
-          {/* 中间 - 当前对话 */}
-          <div className="flex-1 flex flex-col min-w-0">
-            {/* 消息区域 */}
-            <div className="flex-1 overflow-y-auto scrollbar-thin space-y-4 pr-2">
-              {project.messages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-lg p-3 ${
-                      msg.role === 'user'
-                        ? 'bg-primary text-white'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
+          {/* 底部需求进度面板（可折叠） */}
+          <div className="border-t">
+            <button
+              type="button"
+              onClick={() => setShowProgressPanel(!showProgressPanel)}
+              className="w-full px-4 py-2 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <span>需求收集进度</span>
+                {completedCount === 6 && (
+                  <span className="text-green-500 text-xs">✓ 已完成</span>
+                )}
+              </span>
+              {showProgressPanel ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
 
-                    {/* 选项按钮 */}
-                    {msg.options && msg.options.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {msg.options.map((option) => (
-                          <button
-                            type="button"
-                            key={option.id}
-                            onClick={() => handleOptionClick(option)}
-                            className="w-full text-left p-2 rounded bg-white/50 hover:bg-white/80 transition-colors"
-                          >
-                            <span className="font-medium">{option.id}. {option.title}</span>
-                            <span className="text-sm text-gray-500 ml-2">- {option.description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+            {showProgressPanel && (
+              <div className="px-4 pb-4">
+                {/* 需求标签流 */}
+                <div className="flex flex-wrap gap-2">
+                  {completedFields.map((field) => (
+                    <div
+                      key={field.key}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all ${
+                        field.completed
+                          ? 'bg-green-50 text-green-700 border border-green-200'
+                          : 'bg-gray-50 text-gray-400 border border-gray-200'
+                      }`}
+                    >
+                      <span>{field.icon}</span>
+                      <span>{field.label}</span>
+                      {field.completed ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                      ) : (
+                        <Circle className="w-3.5 h-3.5 text-gray-300" />
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
 
-            {/* 输入区域 */}
-            <div className="mt-4 pt-4 border-t">
-              <div className="flex gap-2 mb-3">
-                <button
-                  type="button"
-                  onClick={handleAutoFill}
-                  disabled={isLoading}
-                  className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 flex items-center gap-1"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  自动生成
-                </button>
+                {/* 完成提示 */}
+                {project.completeness >= 80 && (
+                  <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-100">
+                    <p className="text-sm text-green-700">
+                      🎉 需求收集完成！点击右上角「生成需求确认书」继续下一步。
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 输入区域 */}
+          <div className="border-t p-4 bg-gray-50/50">
+            <div className="flex gap-3 items-end">
+              {/* 快捷按钮 */}
+              <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={handleGetSuggestions}
                   disabled={isLoading}
-                  className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 flex items-center gap-1"
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 hover:text-primary hover:bg-white rounded-lg border border-gray-200 hover:border-primary/30 transition-all disabled:opacity-50"
+                  title="获取AI建议"
                 >
-                  <RotateCcw className="w-3 h-3" />
-                  给我建议
+                  <Lightbulb className="w-4 h-4" />
+                  <span className="hidden sm:inline">建议</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutoFill}
+                  disabled={isLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 hover:text-primary hover:bg-white rounded-lg border border-gray-200 hover:border-primary/30 transition-all disabled:opacity-50"
+                  title="自动填充"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="hidden sm:inline">跳过</span>
                 </button>
               </div>
 
-              <div className="flex gap-2">
+              {/* 输入框 */}
+              <div className="flex-1 relative">
                 <textarea
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="输入您的回答..."
-                  className="input flex-1 resize-none h-20"
+                  placeholder="输入您的想法，或点击上方按钮获取帮助..."
+                  className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 resize-none h-12 transition-all"
                   disabled={isLoading}
-                />
-                <button
-                  type="button"
-                  onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isLoading}
-                  className="btn-primary px-4"
-                  aria-label="发送消息"
-                >
-                  {isLoading ? (
-                    <span className="animate-spin">⏳</span>
-                  ) : (
-                    <Send className="w-5 h-5" />
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 右侧 - 需求面板 */}
-          <div className="w-64 border-l pl-4 overflow-y-auto scrollbar-thin hidden md:block">
-            <h3 className="text-sm font-medium text-gray-500 mb-3 flex items-center gap-2">
-              <ListTodo className="w-4 h-4" />
-              需求收集进度
-            </h3>
-
-            {/* 进度条 */}
-            <div className="mb-4">
-              <div className="flex justify-between text-sm mb-1">
-                <span>完整度</span>
-                <span className="font-medium">{project.completeness}%</span>
-              </div>
-              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-300"
-                  style={{ width: `${project.completeness}%` }}
+                  rows={1}
                 />
               </div>
-            </div>
 
-            {/* 说明提示 */}
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg">
-              <div className="flex items-start gap-2">
-                <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-700">
-                  需求澄清阶段您只需与AI对话交流创作想法即可。
-                </p>
-              </div>
-            </div>
-
-            {/* 下一步提示 */}
-            {project.completeness >= 80 && (
-              <div className="mt-4 p-3 bg-green-50 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <Info className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div className="text-sm text-green-700">
-                    <p className="font-medium mb-1">✓ 需求收集完成！</p>
-                    <p className="text-xs">点击"下一步"，AI将为您生成专业的需求确认书。</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 快捷操作 */}
-            <div className="mt-4 pt-4 border-t">
-              <h4 className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
-                快捷操作
-              </h4>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleAutoFill}
-                  disabled={isLoading}
-                  className="w-full text-xs px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 flex items-center justify-center gap-1 transition-colors"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  自动生成当前项
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGetSuggestions}
-                  disabled={isLoading}
-                  className="w-full text-xs px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 flex items-center justify-center gap-1 transition-colors"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  获取AI建议
-                </button>
-              </div>
+              {/* 发送按钮 */}
+              <button
+                type="button"
+                onClick={handleSendMessage}
+                disabled={!inputMessage.trim() || isLoading}
+                className="flex-shrink-0 w-12 h-12 rounded-xl bg-primary hover:bg-primary/90 text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                aria-label="发送消息"
+              >
+                {isLoading ? (
+                  <span className="animate-spin text-lg">⏳</span>
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+              </button>
             </div>
           </div>
         </div>
