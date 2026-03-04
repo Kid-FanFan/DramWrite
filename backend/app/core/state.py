@@ -33,15 +33,26 @@ class Message(TypedDict):
     created_at: Optional[str]
 
 
+class CharacterAppearance(TypedDict):
+    """人物外观"""
+    height: str                        # 身高
+    build: str                         # 体型
+    hair: str                          # 发型发色
+    clothing_style: str                # 穿着风格
+    distinctive_features: str          # 标志性特征
+
+
 class Character(TypedDict):
-    """人物信息"""
-    name: str
-    role: str                          # 主角/反派/配角
-    age: str
-    personality: str
-    background: str
-    goal: str
-    memory_point: str
+    """人物信息（V1.4增强版）"""
+    name: str                          # 姓名
+    role: str                          # 主角/反派/爱情线/配角
+    age: str                           # 年龄
+    appearance: Optional[CharacterAppearance]  # 外观形象
+    personality: str                   # 性格描述
+    background: str                    # 背景故事
+    goal: str                          # 人物目标/动机
+    memory_point: str                  # 记忆点特征（包含口头禅）
+    relationships: Optional[str]       # 与主要人物的关系
 
 
 class EpisodeOutline(TypedDict):

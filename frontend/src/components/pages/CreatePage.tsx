@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useProjectStore } from '../../stores/projectStore'
-import { Play, Pause, FileText, Users, List, BookOpen, CheckCircle, Loader2, X, ChevronRight, ClipboardList, ArrowLeft, RefreshCw, Terminal } from 'lucide-react'
+import { Play, Pause, FileText, Users, List, BookOpen, CheckCircle, Loader2, X, ChevronRight, ClipboardList, ArrowLeft, RefreshCw } from 'lucide-react'
 
 interface CreationStep {
   id: string
@@ -53,11 +53,6 @@ const creationAPI = {
     })
     return await response.json()
   },
-  // V1.2新增：获取调试日志
-  getDebugLogs: async (projectId: string) => {
-    const response = await fetch(`/api/v1/projects/${projectId}/create/logs`)
-    return await response.json()
-  },
 }
 
 // 项目API
@@ -81,9 +76,6 @@ function CreatePage() {
   const [pageLoading, setPageLoading] = useState(true)
   const [viewingStep, setViewingStep] = useState<string | null>(null)
   const [showRequirements, setShowRequirements] = useState(false)
-  // V1.2新增：调试信息
-  const [showDebugLogs, setShowDebugLogs] = useState(false)
-  const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [isRegenerating, setIsRegenerating] = useState(false)
 
   // 初始加载：获取最新项目状态
@@ -151,14 +143,10 @@ function CreatePage() {
 
     const interval = setInterval(() => {
       fetchProgress()
-      // V1.2新增：同时获取调试日志
-      if (showDebugLogs) {
-        fetchDebugLogs()
-      }
     }, 5000) // 每5秒轮询一次
 
     return () => clearInterval(interval)
-  }, [project?.status, id, showDebugLogs])
+  }, [project?.status, id])
 
   if (pageLoading) {
     return (
@@ -257,19 +245,6 @@ function CreatePage() {
     }
   }
 
-  // V1.2新增：获取调试日志
-  const fetchDebugLogs = async () => {
-    if (!id) return
-    try {
-      const response = await creationAPI.getDebugLogs(id)
-      if (response.code === 200 && response.data?.logs) {
-        setDebugLogs(response.data.logs)
-      }
-    } catch (err) {
-      console.error('获取调试日志失败:', err)
-    }
-  }
-
   // 获取步骤内容
   const getStepContent = (stepId: string) => {
     switch (stepId) {
@@ -301,11 +276,31 @@ function CreatePage() {
 
         const content = chars.map((c: any) => {
           const lines = [`【${c.name} - ${c.role}】`]
-          if (c.age) lines.push(`${c.age}岁`)
+          if (c.age) lines.push(`年龄：${c.age}`)
+
+          // 外观信息
+          if (c.appearance) {
+            const app = c.appearance
+            const appParts = []
+            if (app.height) appParts.push(`身高${app.height}`)
+            if (app.build) appParts.push(`体型${app.build}`)
+            if (app.hair) appParts.push(`发型${app.hair}`)
+            if (app.clothing_style) appParts.push(`穿着${app.clothing_style}`)
+            if (app.distinctive_features) appParts.push(`特征${app.distinctive_features}`)
+            if (appParts.length > 0) lines.push(`外观：${appParts.join('，')}`)
+          }
+
           if (c.personality) lines.push(`性格：${c.personality}`)
           if (c.background) lines.push(`背景：${c.background}`)
           if (c.goal) lines.push(`目标：${c.goal}`)
-          if (c.memoryPoint) lines.push(`记忆点：${c.memoryPoint}`)
+
+          // 兼容两种字段名
+          const memoryPoint = c.memory_point || c.memoryPoint
+          if (memoryPoint) lines.push(`记忆点：${memoryPoint}`)
+
+          // 人物关系
+          if (c.relationships) lines.push(`关系：${c.relationships}`)
+
           return lines.join('\n')
         }).join('\n\n---\n\n')
 
@@ -383,19 +378,6 @@ function CreatePage() {
             >
               <ClipboardList className="w-4 h-4" />
               需求
-            </button>
-
-            {/* V1.2新增：调试信息按钮 */}
-            <button
-              onClick={() => {
-                setShowDebugLogs(!showDebugLogs)
-                if (!showDebugLogs) fetchDebugLogs()
-              }}
-              className="btn-secondary flex items-center gap-2"
-              title={showDebugLogs ? '隐藏调试信息' : '显示调试信息'}
-            >
-              <Terminal className="w-4 h-4" />
-              {showDebugLogs ? '隐藏日志' : '日志'}
             </button>
 
             {isCompleted ? (
@@ -513,36 +495,6 @@ function CreatePage() {
           </span>
         </div>
       </div>
-
-      {/* V1.2新增：调试日志面板 */}
-      {showDebugLogs && (
-        <div className="card bg-gray-900 text-green-400 font-mono text-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-medium flex items-center gap-2">
-              <Terminal className="w-4 h-4" />
-              创作流程调试日志
-            </h3>
-            <button
-              onClick={fetchDebugLogs}
-              className="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded"
-            >
-              刷新
-            </button>
-          </div>
-          <div className="bg-black rounded-lg p-4 max-h-64 overflow-y-auto space-y-1">
-            {debugLogs.length === 0 ? (
-              <p className="text-gray-500">暂无日志...</p>
-            ) : (
-              debugLogs.map((log, index) => (
-                <div key={index} className="break-all">
-                  <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span>{' '}
-                  {log}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
 
       {/* V1.2新增：重新生成控制面板（仅已完成或暂停状态显示） */}
       {(isCompleted || isPaused) && (

@@ -386,15 +386,6 @@ class ExportService:
                         ExportFormatConfig.BODY_SIZE
                     )
 
-                # 口头禅（V1.1新增）
-                catchphrase = ExportService._safe_get_field(char, 'catchphrase', 'catchphrase', '')
-                if catchphrase:
-                    ExportService._add_formatted_paragraph(
-                        doc, f"口头禅：{catchphrase}",
-                        ExportFormatConfig.BODY_FONT,
-                        ExportFormatConfig.BODY_SIZE
-                    )
-
                 doc.add_paragraph()  # 空行
 
             doc.add_page_break()

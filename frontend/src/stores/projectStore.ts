@@ -43,10 +43,37 @@ const projectAPI = {
   },
 }
 
+// 转换后端人物格式为前端格式（处理snake_case到camelCase）
+const convertCharacter = (char: any): any => {
+  if (!char) return char
+
+  return {
+    name: char.name,
+    role: char.role,
+    age: char.age,
+    appearance: char.appearance ? {
+      height: char.appearance.height,
+      build: char.appearance.build,
+      hair: char.appearance.hair,
+      clothing_style: char.appearance.clothing_style,
+      distinctive_features: char.appearance.distinctive_features,
+    } : undefined,
+    personality: char.personality,
+    background: char.background,
+    goal: char.goal,
+    memory_point: char.memory_point,
+    relationships: char.relationships,
+  }
+}
+
 // 转换后端项目格式为前端格式
 const convertBackendProject = (backendProject: any): Project => {
   // 安全获取数组字段（防止null/undefined）
   const safeArray = (val: any): any[] => Array.isArray(val) ? val : []
+
+  // 转换人物数组
+  const rawCharacters = backendProject.character_profiles || backendProject.characterProfiles || []
+  const characterProfiles = safeArray(rawCharacters).map(convertCharacter)
 
   return {
     id: backendProject.id || backendProject.project_id,
@@ -68,10 +95,22 @@ const convertBackendProject = (backendProject: any): Project => {
     storyTitle: backendProject.story_title || backendProject.storyTitle || '',
     oneLiner: backendProject.one_liner || backendProject.oneLiner || '',
     sellingPoints: safeArray(backendProject.selling_points || backendProject.sellingPoints),
-    characterProfiles: safeArray(backendProject.character_profiles || backendProject.characterProfiles),
+    characterProfiles: characterProfiles,
     relationshipMap: backendProject.relationship_map || backendProject.relationshipMap || '',
-    episodeOutlines: safeArray(backendProject.episode_outlines || backendProject.episodeOutlines),
-    scripts: safeArray(backendProject.scripts || backendProject.scripts),
+    episodeOutlines: safeArray(backendProject.episode_outlines || backendProject.episodeOutlines).map((outline: any) => ({
+      episodeNumber: outline.episode_number || outline.episodeNumber,
+      summary: outline.summary,
+      hook: outline.hook,
+      isCheckpoint: outline.is_checkpoint || outline.isCheckpoint || false,
+    })),
+    scripts: safeArray(backendProject.scripts || backendProject.scripts).map((script: any) => ({
+      episodeNumber: script.episode_number || script.episodeNumber,
+      title: script.title,
+      content: script.content,
+      wordCount: script.word_count || script.wordCount,
+      status: script.status,
+      qualityReport: script.quality_report || script.qualityReport,
+    })),
     creationProgress: backendProject.creation_progress || backendProject.creationProgress,
   }
 }

@@ -84,14 +84,26 @@ export interface Option {
   description: string
 }
 
+// 人物外观
+export interface CharacterAppearance {
+  height?: string              // 身高
+  build?: string               // 体型
+  hair?: string                // 发型发色
+  clothing_style?: string      // 穿着风格
+  distinctive_features?: string // 标志性特征
+}
+
+// 人物信息（V1.4增强版）
 export interface Character {
-  name: string
-  role: '主角' | '反派' | '配角'
-  age: string
-  personality: string
-  background: string
-  goal: string
-  memoryPoint: string
+  name: string                 // 姓名
+  role: string                 // 主角/反派/爱情线/配角
+  age: string                  // 年龄
+  appearance?: CharacterAppearance  // 外观形象
+  personality: string          // 性格描述
+  background: string           // 背景故事
+  goal: string                 // 人物目标/动机
+  memory_point: string         // 记忆点特征（包含口头禅）
+  relationships?: string       // 与主要人物的关系
 }
 
 export interface EpisodeOutline {

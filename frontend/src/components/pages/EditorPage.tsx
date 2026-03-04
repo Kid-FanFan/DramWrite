@@ -19,7 +19,15 @@ interface Character {
   personality: string
   background: string
   goal: string
-  memoryPoint: string
+  memory_point: string
+  appearance?: {
+    height?: string
+    build?: string
+    hair?: string
+    clothing_style?: string
+    distinctive_features?: string
+  }
+  relationships?: string
 }
 
 interface Outline {
@@ -414,6 +422,21 @@ function EditorPage() {
                             <span className="text-xs px-2 py-1 bg-gray-100 rounded">{char.role}</span>
                             <span className="text-xs text-gray-500">{char.age}</span>
                           </div>
+
+                          {/* 外观信息 */}
+                          {char.appearance && (
+                            <div className="mb-3 p-2 bg-gray-50 rounded text-sm">
+                              <span className="text-gray-500">外观：</span>
+                              {[
+                                char.appearance.height && `身高${char.appearance.height}`,
+                                char.appearance.build && `体型${char.appearance.build}`,
+                                char.appearance.hair && `发型${char.appearance.hair}`,
+                                char.appearance.clothing_style && `穿着${char.appearance.clothing_style}`,
+                                char.appearance.distinctive_features && `特征${char.appearance.distinctive_features}`
+                              ].filter(Boolean).join('，')}
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-2 gap-4 text-sm">
                             <div>
                               <span className="text-gray-500">性格：</span>
@@ -429,9 +452,17 @@ function EditorPage() {
                             </div>
                             <div>
                               <span className="text-gray-500">记忆点：</span>
-                              {char.memoryPoint}
+                              {char.memory_point || char.memoryPoint || ''}
                             </div>
                           </div>
+
+                          {/* 人物关系 */}
+                          {char.relationships && (
+                            <div className="mt-3 text-sm">
+                              <span className="text-gray-500">关系：</span>
+                              {char.relationships}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
