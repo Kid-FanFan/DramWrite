@@ -116,6 +116,34 @@ class CreationProgress(TypedDict):
     estimated_remaining_time: Optional[int]  # 预计剩余时间（秒）
 
 
+class RequirementAssessmentField(TypedDict):
+    """单个需求字段的评估"""
+    status: str                        # empty / partial / confirmed
+    understanding: str                 # 智能体的理解描述
+    confidence: float                  # 置信度 0-1
+    suggestion: Optional[str]          # 改进建议
+
+
+class RequirementAssessment(TypedDict):
+    """需求评估结果"""
+    genre: Optional[RequirementAssessmentField]
+    protagonist: Optional[RequirementAssessmentField]
+    conflict: Optional[RequirementAssessmentField]
+    target_audience: Optional[RequirementAssessmentField]
+    episodes: Optional[RequirementAssessmentField]
+    style: Optional[RequirementAssessmentField]
+
+
+class UnderstandingDisplay(TypedDict):
+    """需求理解展示（用于右侧边栏）"""
+    title: Optional[str]               # 暂定剧名
+    genre_summary: Optional[str]       # 题材概述
+    protagonist_summary: Optional[str] # 主角概述
+    conflict_summary: Optional[str]    # 冲突概述
+    style_summary: Optional[str]       # 风格概述
+    next_steps: List[str]              # 接下来要完善的内容
+
+
 class ScriptState(TypedDict):
     """
     剧本创作状态
@@ -136,6 +164,26 @@ class ScriptState(TypedDict):
     requirements_locked: bool          # 需求是否已锁定
     pending_field: Optional[str]       # 当前待询问的字段
     showed_summary: bool               # 是否已展示确认书
+
+    # ===== V1.3 统一上下文管理 =====
+    # 三层核心信息
+    conversation_summary: Optional[str]                      # 对话摘要（200字内，历史上下文）
+    requirement_analysis: Optional[str]                      # 需求分析（300字内，当前理解）
+    last_context_update_index: int                           # 上次上下文更新时的消息索引
+
+    # 结构化数据
+    requirement_assessment: Optional[RequirementAssessment]  # 需求评估（内部结构化数据）
+
+    # 展示数据
+    understanding_display: Optional[UnderstandingDisplay]    # 需求理解展示（侧边栏用）
+    understanding_summary: Optional[str]                     # 需求理解报告（弹窗显示，Markdown格式）
+
+    # 传递给下一阶段的上下文
+    clarify_context_for_creation: Optional[Dict[str, Any]]   # 需求澄清阶段的上下文，传递给剧本创作阶段
+
+    # 兼容旧版本（将逐步移除）
+    last_summary_index: int                                  # [兼容] 上次摘要时的消息索引
+    recent_context: Optional[str]                            # [兼容] 最近5轮对话内容
 
     # ===== 阶段二：剧本创作 =====
     story_synopsis: Optional[str]              # 故事梗概
@@ -179,6 +227,18 @@ def create_initial_state(project_id: str, project_name: str) -> ScriptState:
         "pending_field": None,
         "showed_summary": False,
 
+        # V1.3 统一上下文管理
+        "conversation_summary": None,
+        "requirement_analysis": None,
+        "last_context_update_index": 0,
+        "requirement_assessment": None,
+        "understanding_display": None,
+        "understanding_summary": None,
+        "clarify_context_for_creation": None,  # 传递给剧本创作阶段的上下文
+        # 兼容旧版本
+        "last_summary_index": 0,
+        "recent_context": None,
+
         # 剧本创作阶段
         "story_synopsis": None,
         "story_title": None,
@@ -206,7 +266,7 @@ def create_initial_state(project_id: str, project_name: str) -> ScriptState:
 
 def check_requirement_completeness(requirements: Dict[str, Any]) -> int:
     """
-    检查需求完整度
+    检查需求完整度（支持子字段检测）
 
     必需字段及权重：
     - genre (题材): 20分
@@ -217,6 +277,8 @@ def check_requirement_completeness(requirements: Dict[str, Any]) -> int:
     - style (风格基调): 10分
 
     总分100分，>=80分视为完整
+
+    支持子字段检测：当主字段为空时，检查对应的子字段是否存在
     """
     weights = {
         "genre": 20,
@@ -227,9 +289,32 @@ def check_requirement_completeness(requirements: Dict[str, Any]) -> int:
         "style": 10
     }
 
+    # 子字段到主字段的映射
+    subfield_mapping = {
+        "genre": ["genre", "题材类型"],
+        "protagonist": [
+            "protagonist", "protagonist_identity", "protagonist_traits",
+            "protagonist_goal", "protagonist_occupation", "protagonist_style",
+            "主角", "主角设定"
+        ],
+        "conflict": [
+            "conflict", "core_conflict", "system_binding_reason",
+            "system_operation_mode", "穿越原因", "绑定系统"
+        ],
+        "target_audience": ["target_audience", "目标受众", "受众"],
+        "episodes": ["episodes", "集数"],
+        "style": ["style", "风格", "风格基调"]
+    }
+
     score = 0
     for field, weight in weights.items():
+        # 检查主字段
         if field in requirements and requirements[field]:
             score += weight
+        # 检查子字段（如果主字段为空）
+        elif field in subfield_mapping:
+            subfields = subfield_mapping[field]
+            if any(sf in requirements and requirements[sf] for sf in subfields):
+                score += weight
 
     return score

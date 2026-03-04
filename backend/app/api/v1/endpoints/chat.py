@@ -23,6 +23,7 @@ from app.agents.clarify.nodes import (
     check_requirement_completeness,
     generate_requirement_confirmation,
 )
+from app.agents.clarify.context_manager import update_all_context
 from app.services.llm import LLMConfig, get_llm_service
 
 router = APIRouter()
@@ -43,6 +44,11 @@ class ChatResponse(BaseModel):
     requirements_updated: Optional[dict] = None
     completeness: int
     status: str
+    # V1.2 新增字段
+    requirement_assessment: Optional[dict] = None
+    understanding_display: Optional[dict] = None
+    understanding_summary: Optional[str] = None  # 需求理解摘要（Markdown格式）
+    pending_field: Optional[str] = None
 
 
 @router.post("/{project_id}/chat", response_model=dict)
@@ -54,6 +60,11 @@ async def send_message(project_id: str, request: ChatRequest):
         project_id: 项目ID
         request: 对话请求
     """
+    logger.info("=" * 60)
+    logger.info(f"📨 [API] POST /{project_id}/chat - 收到请求")
+    logger.info(f"📝 [API] 用户消息: {request.message[:100]}{'...' if len(request.message) > 100 else ''}")
+    logger.info("=" * 60)
+
     # 获取项目
     project = ProjectService.get_project(project_id)
     if not project:
@@ -73,7 +84,9 @@ async def send_message(project_id: str, request: ChatRequest):
 
     # 运行 ClarifyGraph
     try:
+        logger.info("🔄 [API] 开始执行 ClarifyGraph...")
         result = await run_clarify_step(project)
+        logger.info("✅ [API] ClarifyGraph 执行完成")
         # 更新项目
         ProjectService.update_project(project_id, result)
     except Exception as e:
@@ -116,7 +129,12 @@ async def send_message(project_id: str, request: ChatRequest):
             "requirements_updated": result.get("requirements"),
             "completeness": result.get("completeness", 0),
             "status": "locked" if result.get("requirements_locked") else "clarifying",
-            "llm_not_configured": is_llm_error
+            "llm_not_configured": is_llm_error,
+            # V1.2 新增字段
+            "requirement_assessment": result.get("requirement_assessment"),
+            "understanding_display": result.get("understanding_display"),
+            "understanding_summary": result.get("understanding_summary"),
+            "pending_field": result.get("pending_field")
         }
     }
 
@@ -194,28 +212,45 @@ async def get_requirement_summary(project_id: str):
     try:
         # 初始化 LLM 服务
         config = get_current_llm_config()
+        # 创建 LLM 配置 - 注意：这里使用用户配置，但需求确认书生成时会强制覆盖为4000
+        raw_max_tokens = config.get("maxTokens", 4000)
+        logger.info(f"🔧 [API] 用户配置 maxTokens={raw_max_tokens}")
+
         llm_config = LLMConfig(
             provider=config.get("provider", "tongyi"),
             api_key=config.get("apiKey"),
             api_base=config.get("apiBase") or None,
             model=config.get("model", "qwen-max"),
             temperature=config.get("temperature", 0.7),
-            max_tokens=config.get("maxTokens", 4000)
+            max_tokens=raw_max_tokens
         )
         llm_service = get_llm_service(llm_config)
+        logger.info(f"🔧 [API] LLMService 创建完成，config.max_tokens={llm_service.config.max_tokens}")
 
-        # 生成优化后的需求确认书
-        confirmation = await generate_requirement_confirmation(messages, llm_service)
+        # 构建统一上下文
+        requirements = project.get("requirements", {})
+
+        # ===== V2.0: 使用混合架构生成确认书 =====
+        confirmation = await generate_requirement_confirmation(
+            messages=messages,
+            llm_service=llm_service,
+            core_requirements=requirements
+        )
 
         # 将确认书中的关键信息更新到项目 requirements 中
-        requirements = project.get("requirements", {})
         requirements["episodes"] = confirmation.get("episodes", "80")
         requirements["genre"] = confirmation.get("genre", requirements.get("genre", ""))
-        requirements["protagonist"] = confirmation.get("protagonist", {}).get("name", requirements.get("protagonist", ""))
+        structured_data = confirmation.get("structured_data", {})
+        requirements["protagonist"] = structured_data.get("protagonist", {}).get("name", requirements.get("protagonist", ""))
         requirements["target_audience"] = confirmation.get("target_audience", requirements.get("target_audience", ""))
-        requirements["style"] = confirmation.get("style", requirements.get("style", ""))
+        requirements["style"] = confirmation.get("style_summary", requirements.get("style", ""))
         project["requirements"] = requirements
+
+        # 保存确认书到项目
+        project["requirement_confirmation"] = confirmation
         ProjectService.update_project(project_id, project)
+
+        logger.info(f"✅ [API] 需求确认书V4生成成功，剧名: {confirmation.get('title', 'N/A')}")
 
         return {
             "code": 200,
@@ -289,6 +324,103 @@ async def confirm_requirements(
         }
 
 
+@router.post("/{project_id}/regenerate-confirmation", response_model=dict)
+async def regenerate_confirmation(project_id: str):
+    """
+    重新生成需求确认书
+
+    基于最新的对话历史和需求，重新生成一份需求确认书。
+    旧版本会保留在历史记录中（如需要可实现版本管理）。
+
+    Args:
+        project_id: 项目ID
+    """
+    project = ProjectService.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 检查 LLM 配置
+    is_configured, error_message = check_llm_configured()
+    if not is_configured:
+        return {
+            "code": 4001,
+            "message": "LLM未配置",
+            "data": None
+        }
+
+    messages = project.get("messages", [])
+    if not messages:
+        return {
+            "code": 4002,
+            "message": "对话历史为空",
+            "data": None
+        }
+
+    try:
+        # 初始化 LLM 服务
+        config = get_current_llm_config()
+        llm_config = LLMConfig(
+            provider=config.get("provider", "tongyi"),
+            api_key=config.get("apiKey"),
+            api_base=config.get("apiBase") or None,
+            model=config.get("model", "qwen-max"),
+            temperature=config.get("temperature", 0.8),  # 重新生成时略微增加随机性
+            max_tokens=config.get("maxTokens", 4000)
+        )
+        llm_service = get_llm_service(llm_config)
+
+        # 获取当前需求
+        requirements = project.get("requirements", {})
+
+        # 保存旧版本到历史记录（可选）
+        old_confirmation = project.get("requirement_confirmation")
+        if old_confirmation:
+            if "confirmation_history" not in project:
+                project["confirmation_history"] = []
+            project["confirmation_history"].append({
+                "confirmation": old_confirmation,
+                "saved_at": project.get("updated_at")
+            })
+            # 只保留最近3个版本
+            project["confirmation_history"] = project["confirmation_history"][-3:]
+
+        # ===== 使用生成器重新生成确认书 =====
+        confirmation = await generate_requirement_confirmation(
+            messages=messages,
+            llm_service=llm_service,
+            core_requirements=requirements
+        )
+
+        # 更新项目中的确认书
+        project["requirement_confirmation"] = confirmation
+
+        # 同时更新 requirements 中的关键字段
+        requirements["episodes"] = confirmation.get("episodes", "80")
+        requirements["genre"] = confirmation.get("genre", requirements.get("genre", ""))
+        structured_data = confirmation.get("structured_data", {})
+        requirements["protagonist"] = structured_data.get("protagonist", {}).get("name", requirements.get("protagonist", ""))
+        requirements["target_audience"] = confirmation.get("target_audience", requirements.get("target_audience", ""))
+        requirements["style"] = confirmation.get("style_summary", requirements.get("style", ""))
+        project["requirements"] = requirements
+
+        ProjectService.update_project(project_id, project)
+
+        logger.info(f"✅ [API] 需求确认书已重新生成，剧名: {confirmation.get('title', 'N/A')}")
+
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "confirmation": confirmation,
+                "raw_requirements": requirements,
+                "completeness": project.get("completeness", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"重新生成需求确认书失败: {e}")
+        raise HTTPException(status_code=500, detail=f"重新生成需求确认书失败: {str(e)}")
+
+
 # ===== 流式对话 API =====
 
 class StreamChatRequest(BaseModel):
@@ -308,10 +440,13 @@ async def stream_chat_response(project_id: str, project: dict, user_message: dic
     import asyncio
     from app.agents.clarify.nodes import intent_analyzer_node
 
+    logger.info("🌊 [流式] stream_chat_response 开始执行")
+
     # 添加用户消息
     messages = project.get("messages", [])
     messages.append(user_message)
     project["messages"] = messages
+    logger.info(f"🌊 [流式] 用户消息已添加，当前消息数: {len(messages)}")
 
     # 检查 LLM 配置
     is_configured, error_message = check_llm_configured()
@@ -321,9 +456,11 @@ async def stream_chat_response(project_id: str, project: dict, user_message: dic
 
     # 第一步：运行意图分析节点（非流式，需要结构化输出）
     try:
+        logger.info("🌊 [流式] 开始意图分析...")
         result = await intent_analyzer_node(project)
+        logger.info(f"🌊 [流式] 意图分析完成，意图类型: {result.get('last_intent') or 'unknown'}")
     except Exception as e:
-        logger.error(f"意图分析失败: {e}")
+        logger.error(f"🌊 [流式] 意图分析失败: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': '分析用户意图失败'}, ensure_ascii=False)}\n\n"
         return
 
@@ -341,7 +478,12 @@ async def stream_chat_response(project_id: str, project: dict, user_message: dic
         "type": "metadata",
         "completeness": result.get("completeness", 0),
         "status": "clarifying",
-        "requirements_updated": result.get("requirements")
+        "requirements_updated": result.get("requirements"),
+        # V1.2 新增字段
+        "requirement_assessment": result.get("requirement_assessment"),
+        "understanding_display": result.get("understanding_display"),
+        "understanding_summary": result.get("understanding_summary"),
+        "pending_field": result.get("pending_field")
     }
     yield f"data: {json.dumps(metadata, ensure_ascii=False)}\n\n"
 
@@ -526,11 +668,50 @@ async def stream_chat_response(project_id: str, project: dict, user_message: dic
         yield f"data: {json.dumps({'type': 'error', 'content': f'生成回复失败: {str(e)}'}, ensure_ascii=False)}\n\n"
         return
 
-    # 发送完成标记
+    # ===== V1.3 异步上下文更新 =====
+    # 先发送 done 标记，让用户可以继续输入（前端 isLoading = false）
     yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
-    # 更新项目状态
+    # 更新项目状态（先保存基本状态）
     ProjectService.update_project(project_id, result)
+
+    # ===== V1.3 异步评估 + 实时推送 =====
+    # 评估需求收集进度并推送到前端
+    try:
+        from app.agents.clarify.nodes import assess_progress_after_response
+        logger.info("📊 [流式] 开始异步评估需求进度...")
+        assessment_result = await assess_progress_after_response(result)
+
+        # 更新状态中的评估结果
+        result["completeness"] = assessment_result.get("completeness", result.get("completeness", 0))
+        result["requirement_assessment"] = assessment_result.get("requirement_assessment")
+
+        # 发送 assessment_update 事件到前端
+        assessment_update = {
+            "type": "assessment_update",
+            "completeness": assessment_result.get("completeness", 0),
+            "requirement_assessment": assessment_result.get("requirement_assessment")
+        }
+        yield f"data: {json.dumps(assessment_update, ensure_ascii=False)}\n\n"
+        logger.info(f"📊 [流式] 评估已推送，完整度: {assessment_result.get('completeness')}%")
+
+        # 保存更新后的状态
+        ProjectService.update_project(project_id, result)
+
+    except Exception as e:
+        logger.warning(f"📊 [流式] 评估失败（不影响主流程）: {e}")
+
+    # ===== 后台更新上下文（不推送到前端，用户主动获取时再显示） =====
+    try:
+        logger.info("🔄 [流式] 开始更新统一上下文（后台）...")
+        result = await update_all_context(result)
+        logger.info("✅ [流式] 统一上下文更新完成")
+
+        # 保存更新后的状态（包括 understanding_summary）
+        ProjectService.update_project(project_id, result)
+        logger.info("📤 [流式] 上下文已更新，用户可主动获取分析详情")
+    except Exception as e:
+        logger.warning(f"更新上下文失败（不影响主流程）: {e}")
 
 
 @router.post("/{project_id}/chat/stream")
@@ -540,6 +721,11 @@ async def send_message_stream(project_id: str, request: StreamChatRequest):
 
     使用 Server-Sent Events (SSE) 实现流式输出
     """
+    logger.info("=" * 60)
+    logger.info(f"📨 [API] POST /{project_id}/chat/stream - 收到流式请求")
+    logger.info(f"📝 [API] 用户消息: {request.message[:100]}{'...' if len(request.message) > 100 else ''}")
+    logger.info("=" * 60)
+
     # 获取项目
     project = ProjectService.get_project(project_id)
     if not project:
@@ -565,3 +751,65 @@ async def send_message_stream(project_id: str, request: StreamChatRequest):
             "X-Accel-Buffering": "no"  # 禁用 Nginx 缓冲
         }
     )
+
+
+@router.get("/{project_id}/requirement-analysis", response_model=dict)
+async def get_requirement_analysis(project_id: str):
+    """
+    获取需求分析详情（用户主动点击时调用）
+
+    返回最新的需求理解摘要（Markdown格式）和相关信息
+    """
+    logger.info(f"📋 [API] GET /{project_id}/requirement-analysis - 获取需求分析")
+
+    project = ProjectService.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 检查 LLM 配置
+    is_configured, error_message = check_llm_configured()
+    if not is_configured:
+        return {
+            "code": 4001,
+            "message": "LLM未配置",
+            "data": None
+        }
+
+    # 如果已有 understanding_summary，直接返回
+    existing_summary = project.get("understanding_summary")
+    if existing_summary:
+        logger.info(f"📋 [API] 返回已缓存的需求分析")
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "understanding_summary": existing_summary,
+                "requirement_analysis": project.get("requirement_analysis"),
+                "conversation_summary": project.get("conversation_summary"),
+                "understanding_display": project.get("understanding_display"),
+                "completeness": project.get("completeness", 0)
+            }
+        }
+
+    # 如果没有，尝试生成（后台更新可能还没完成，或者用户第一次请求）
+    try:
+        logger.info("📋 [API] 未找到缓存，尝试生成需求分析...")
+        result = await update_all_context(project)
+
+        # 保存更新
+        ProjectService.update_project(project_id, result)
+
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "understanding_summary": result.get("understanding_summary"),
+                "requirement_analysis": result.get("requirement_analysis"),
+                "conversation_summary": result.get("conversation_summary"),
+                "understanding_display": result.get("understanding_display"),
+                "completeness": result.get("completeness", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"生成需求分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"生成需求分析失败: {str(e)}")

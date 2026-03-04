@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useProjectStore } from '../../stores/projectStore'
-import { Play, Pause, FileText, Users, List, BookOpen, CheckCircle, Loader2, X, ChevronRight, ClipboardList } from 'lucide-react'
+import { Play, Pause, FileText, Users, List, BookOpen, CheckCircle, Loader2, X, ChevronRight, ClipboardList, ArrowLeft, RefreshCw, Terminal } from 'lucide-react'
 
 interface CreationStep {
   id: string
@@ -44,6 +44,20 @@ const creationAPI = {
     const response = await fetch(`/api/v1/projects/${projectId}/progress`)
     return await response.json()
   },
+  // V1.2新增：重新生成
+  regenerate: async (projectId: string, contentType: string) => {
+    const response = await fetch(`/api/v1/projects/${projectId}/create/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content_type: contentType }),
+    })
+    return await response.json()
+  },
+  // V1.2新增：获取调试日志
+  getDebugLogs: async (projectId: string) => {
+    const response = await fetch(`/api/v1/projects/${projectId}/create/logs`)
+    return await response.json()
+  },
 }
 
 // 项目API
@@ -67,6 +81,10 @@ function CreatePage() {
   const [pageLoading, setPageLoading] = useState(true)
   const [viewingStep, setViewingStep] = useState<string | null>(null)
   const [showRequirements, setShowRequirements] = useState(false)
+  // V1.2新增：调试信息
+  const [showDebugLogs, setShowDebugLogs] = useState(false)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
   // 初始加载：获取最新项目状态
   useEffect(() => {
@@ -133,10 +151,14 @@ function CreatePage() {
 
     const interval = setInterval(() => {
       fetchProgress()
+      // V1.2新增：同时获取调试日志
+      if (showDebugLogs) {
+        fetchDebugLogs()
+      }
     }, 5000) // 每5秒轮询一次
 
     return () => clearInterval(interval)
-  }, [project?.status, id])
+  }, [project?.status, id, showDebugLogs])
 
   if (pageLoading) {
     return (
@@ -206,6 +228,46 @@ function CreatePage() {
 
   const handleGoToEditor = () => {
     navigate(`/project/${id}/edit`)
+  }
+
+  // V1.2新增：返回需求确认书
+  const handleBackToConfirm = () => {
+    if (!id) return
+    navigate(`/project/${id}/confirm`)
+  }
+
+  // V1.2新增：重新生成指定步骤
+  const handleRegenerate = async (contentType: string) => {
+    if (!id) return
+    setIsRegenerating(true)
+    setError('')
+    try {
+      const response = await creationAPI.regenerate(id, contentType)
+      if (response.code === 200) {
+        // 重新获取项目数据
+        await fetchProject(id)
+        setError('')
+      } else {
+        setError(response.message || '重新生成失败')
+      }
+    } catch (err) {
+      setError('重新生成失败，请检查后端是否正常运行')
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
+  // V1.2新增：获取调试日志
+  const fetchDebugLogs = async () => {
+    if (!id) return
+    try {
+      const response = await creationAPI.getDebugLogs(id)
+      if (response.code === 200 && response.data?.logs) {
+        setDebugLogs(response.data.logs)
+      }
+    } catch (err) {
+      console.error('获取调试日志失败:', err)
+    }
   }
 
   // 获取步骤内容
@@ -303,6 +365,16 @@ function CreatePage() {
             <p className="text-gray-500 mt-1">剧本创作中</p>
           </div>
           <div className="flex gap-3">
+            {/* V1.2新增：返回需求确认书 */}
+            <button
+              onClick={handleBackToConfirm}
+              className="btn-secondary flex items-center gap-2"
+              title="返回需求确认书阶段"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              返回确认书
+            </button>
+
             {/* 查看需求按钮 - 随时可用 */}
             <button
               onClick={() => setShowRequirements(true)}
@@ -311,6 +383,19 @@ function CreatePage() {
             >
               <ClipboardList className="w-4 h-4" />
               需求
+            </button>
+
+            {/* V1.2新增：调试信息按钮 */}
+            <button
+              onClick={() => {
+                setShowDebugLogs(!showDebugLogs)
+                if (!showDebugLogs) fetchDebugLogs()
+              }}
+              className="btn-secondary flex items-center gap-2"
+              title={showDebugLogs ? '隐藏调试信息' : '显示调试信息'}
+            >
+              <Terminal className="w-4 h-4" />
+              {showDebugLogs ? '隐藏日志' : '日志'}
             </button>
 
             {isCompleted ? (
@@ -428,6 +513,72 @@ function CreatePage() {
           </span>
         </div>
       </div>
+
+      {/* V1.2新增：调试日志面板 */}
+      {showDebugLogs && (
+        <div className="card bg-gray-900 text-green-400 font-mono text-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-medium flex items-center gap-2">
+              <Terminal className="w-4 h-4" />
+              创作流程调试日志
+            </h3>
+            <button
+              onClick={fetchDebugLogs}
+              className="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded"
+            >
+              刷新
+            </button>
+          </div>
+          <div className="bg-black rounded-lg p-4 max-h-64 overflow-y-auto space-y-1">
+            {debugLogs.length === 0 ? (
+              <p className="text-gray-500">暂无日志...</p>
+            ) : (
+              debugLogs.map((log, index) => (
+                <div key={index} className="break-all">
+                  <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span>{' '}
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* V1.2新增：重新生成控制面板（仅已完成或暂停状态显示） */}
+      {(isCompleted || isPaused) && (
+        <div className="card">
+          <h3 className="font-medium mb-4 flex items-center gap-2">
+            <RefreshCw className="w-5 h-5" />
+            重新生成控制
+          </h3>
+          <p className="text-sm text-gray-500 mb-4">
+            对某个阶段的生成结果不满意？可以选择重新生成该阶段及其后续内容。
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {STEPS.map((step) => (
+              <button
+                key={step.id}
+                onClick={() => handleRegenerate(step.id)}
+                disabled={isRegenerating || isCreating}
+                className="btn-secondary text-sm py-2 flex items-center justify-center gap-2"
+              >
+                {isRegenerating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  step.icon
+                )}
+                重生成{step.name}
+              </button>
+            ))}
+          </div>
+          {isRegenerating && (
+            <p className="mt-3 text-sm text-primary flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              正在重新生成，请稍候...
+            </p>
+          )}
+        </div>
+      )}
 
       {/* 提示 */}
       {!isCreating && !isCompleted && progress === 0 && (

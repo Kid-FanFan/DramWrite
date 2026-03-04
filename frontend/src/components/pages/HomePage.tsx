@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Plus, Trash2, Edit3, Download, PlayCircle, PauseCircle } from 'lucide-react'
+import { Plus, Trash2, Download, PauseCircle } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
 
 function HomePage() {

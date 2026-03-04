@@ -57,3 +57,49 @@ def get_settings() -> Settings:
 
 # 导出配置实例
 settings = get_settings()
+
+
+# ===== LLM 配置工具函数 =====
+
+def get_current_llm_config() -> dict:
+    """
+    获取当前 LLM 配置（从本地存储）
+
+    Returns:
+        dict: LLM 配置字典
+    """
+    try:
+        from app.services.project import ProjectService
+        config = ProjectService.get_settings()
+        return config if config else _get_default_llm_config()
+    except Exception:
+        return _get_default_llm_config()
+
+
+def check_llm_configured() -> tuple[bool, str]:
+    """
+    检查 LLM 是否已配置
+
+    Returns:
+        tuple: (是否已配置, 错误消息)
+    """
+    config = get_current_llm_config()
+
+    # 检查 API Key
+    api_key = config.get("apiKey") or config.get("api_key")
+    if not api_key:
+        return False, "请先前往设置页面配置大模型 API Key"
+
+    return True, ""
+
+
+def _get_default_llm_config() -> dict:
+    """获取默认 LLM 配置"""
+    return {
+        "provider": settings.LLM_PROVIDER,
+        "apiKey": settings.LLM_API_KEY,
+        "apiBase": settings.LLM_API_BASE,
+        "model": settings.LLM_MODEL,
+        "temperature": settings.LLM_TEMPERATURE,
+        "maxTokens": settings.LLM_MAX_TOKENS
+    }

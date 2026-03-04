@@ -312,69 +312,52 @@ def check_llm_configured() -> tuple[bool, str]:
     return True, ""
 
 
-# ===== 意图分析节点（V1.1优化版 - CoT思维链）=====
+# ===== 意图分析节点（V1.3简化版 - 仅提取需求）=====
 
 INTENT_ANALYZER_PROMPT = """{system_prompt}
 
 # ═══════════════════════════════════════════════════════════
-# 当前对话上下文
+# 统一上下文
 # ═══════════════════════════════════════════════════════════
-{context}
+{unified_context}
 
 # 已提取的需求字段
 {extracted_requirements}
 
-# 当前正在询问的字段
-当前问题：{pending_field}
-
 # ═══════════════════════════════════════════════════════════
-# 任务：按以下步骤逐步思考（Chain-of-Thought）
+# 任务：分析用户意图并提取需求信息
 # ═══════════════════════════════════════════════════════════
 
 ## Step 1 - 理解用户意图
 分析用户最新回复的内容，判断其核心目的：
-- PROVIDE_INFO: 用户直接回答问题，提供了有效信息
-- REQUEST_HELP: 用户表示"没主意"、"帮我想想"、"给我建议"、"求助"
-- AUTO_FILL: 用户表示"随便"、"自动生成"、"跳过"、"你来定"、"自动填充"
-- CONFIRM_START: 用户明确表示"开始创作"、"没问题了，开始吧"、"确认开始"
-- MODIFY: 用户试图修改之前已确认的信息（如"不对，应该是..."、"改成..."）
+- ANSWER: 用户回答问题，提供了有效信息
+- QUESTION: 用户提出问题，需要解释或引导
+- CHAT: 用户进行闲聊或补充说明
+- REQUEST_SUGGESTION: 用户请求建议（"给我建议"、"帮我想想"、"没主意"）
+- AUTO_FILL: 用户要求自动填充（"随便"、"自动生成"、"你来定"）
+- CONFIRM_START: 用户确认开始创作（"开始吧"、"没问题了"）
+- MODIFY: 用户修改已有信息（"不对，应该是..."、"改成..."）
 
-## Step 2 - 关联上下文
-回顾已收集的需求信息和对话历史：
-- 用户是否在补充新信息？
-- 用户是否在修改已有信息？
-- 用户是否需要帮助？
-- 用户是否想要开始创作？
-
-## Step 3 - 提取结构化数据
-如果意图是 PROVIDE_INFO 或 MODIFY：
-- 从用户回复中提取与当前字段相关的具体信息
-- 字段值应该简洁明了，不要包含多余解释
-- 如果用户回答包含多个信息点，全部提取
-
-## Step 4 - 生成置信度
-根据分析的清晰程度，给出置信度评分（0.0-1.0）
+## Step 2 - 提取结构化数据
+从用户回复中提取所有与需求相关的信息：
+- 字段名可能是：genre(题材)、protagonist(主角)、conflict(冲突)、target_audience(受众)、episodes(集数)、style(风格)
+- 字段值要简洁明了
+- 如果包含多个信息点，全部提取
 
 # ═══════════════════════════════════════════════════════════
 # 输出格式 (JSON)
 # ═══════════════════════════════════════════════════════════
-必须输出合法 JSON（单行，不要换行）：
-{{
-    "reasoning": "Step 1: 意图判断... Step 2: 上下文关联... Step 3: 数据提取...",
-    "intent": "意图类型",
-    "extracted_data": {{"{pending_field}": "提取的值"}},
-    "confidence": 0.85
-}}
+{{"intent": "意图类型", "extracted_data": {{"字段名": "值"}}, "reasoning": "简短判断理由"}}
 
-重要：只输出 JSON，不要有其他文字。"""
+只输出JSON，不要其他文字。"""
 
 
 async def intent_analyzer_node(state: ScriptState) -> ScriptState:
     """
-    意图分析节点
+    意图分析节点（V1.3简化版）
 
-    分析用户输入，判断意图并提取信息
-    使用系统提示词和优化的上下文管理
+    职责：仅分析意图并提取需求信息，不做评估
+    评估在响应生成后异步进行
     """
     messages = state.get("messages", [])
     if not messages or messages[-1]["role"] != "user":
@@ -382,9 +365,7 @@ async def intent_analyzer_node(state: ScriptState) -> ScriptState:
 
     # 检查 LLM 是否配置
     is_configured, error_message = check_llm_configured()
-
     if not is_configured:
-        # 添加错误提示消息
         messages.append({
             "role": "assistant",
             "content": error_message,
@@ -395,9 +376,12 @@ async def intent_analyzer_node(state: ScriptState) -> ScriptState:
         state["llm_not_configured"] = True
         return state
 
+    # 获取当前用户消息
     user_message = messages[-1]["content"]
     requirements = state.get("requirements", {})
-    pending_field = state.get("pending_field", "")
+
+    # 构建统一上下文
+    unified_context = build_unified_context_simple(state)
 
     # 初始化 LLM 服务
     config = get_current_llm_config()
@@ -411,18 +395,14 @@ async def intent_analyzer_node(state: ScriptState) -> ScriptState:
     )
     llm_service = get_llm_service(llm_config)
 
-    # 构建上下文（使用新的格式化函数）
-    context = format_messages_for_prompt(messages, max_messages=10)
-
     # 构建提示词
     prompt = INTENT_ANALYZER_PROMPT.format(
         system_prompt=CLARIFY_SYSTEM_PROMPT,
-        context=context,
-        extracted_requirements=json.dumps(requirements, ensure_ascii=False),
-        pending_field=pending_field
+        unified_context=unified_context,
+        extracted_requirements=json.dumps(requirements, ensure_ascii=False)
     )
 
-    # 调用LLM（使用系统提示词）
+    # 调用LLM
     response = await llm_service.generate_with_retry(
         prompt,
         system_prompt=CLARIFY_SYSTEM_PROMPT,
@@ -430,72 +410,436 @@ async def intent_analyzer_node(state: ScriptState) -> ScriptState:
     )
 
     # 解析JSON响应
-    success, result = parse_llm_json_response(response, expected_fields=["intent", "extracted_data", "reasoning"])
+    success, result = parse_llm_json_response(response, expected_fields=["intent", "extracted_data"])
     if not success or not isinstance(result, dict):
-        raise ValueError(f"LLM返回格式错误: {result if not success else '不是有效的JSON对象'}")
+        # 解析失败，使用默认值
+        result = {"intent": "ANSWER", "extracted_data": {}}
 
-    intent = result.get("intent", "PROVIDE_INFO")
+    intent = result.get("intent", "ANSWER")
     extracted_data = result.get("extracted_data", {})
 
-    # 更新状态
-    if intent in ["PROVIDE_INFO", "MODIFY"] and extracted_data:
+    # 更新需求（仅提取，不评估）
+    if intent in ["ANSWER", "MODIFY", "CHAT"] and extracted_data:
         requirements.update(extracted_data)
         state["requirements"] = requirements
-        # 重新计算完整度
+        # 计算完整度（仅用于路由判断，不做评估）
         state["completeness"] = check_requirement_completeness(requirements)
 
-    # 标记是否需要选项
-    state["need_options"] = intent == "REQUEST_HELP"
+    # 保存意图类型（用于路由）
+    state["last_intent"] = intent
+    state["need_options"] = intent == "REQUEST_SUGGESTION"
 
     # 检测是否确认开始
     if intent == "CONFIRM_START" and state.get("completeness", 0) >= 80:
         state["requirements_locked"] = True
 
+    logger.info(f"🎯 [意图分析] intent={intent}, extracted={list(extracted_data.keys())}")
     return state
 
 
-# ===== 引导提问节点 =====
+def build_unified_context_simple(state: ScriptState) -> str:
+    """
+    构建简化的统一上下文
 
-GUIDANCE_GENERATOR_PROMPT = """{system_prompt}
+    包含：对话摘要 + 需求分析 + 最近对话 + 用户当前输入
+    """
+    messages = state.get("messages", [])
+    conversation_summary = state.get("conversation_summary", "")
+    requirement_analysis = state.get("requirement_analysis", "")
 
-# 当前对话上下文
-{context}
+    # 获取用户当前输入
+    user_message = ""
+    for msg in reversed(messages):
+        if msg["role"] == "user":
+            user_message = msg["content"]
+            break
+
+    # 获取最近对话（2轮）
+    recent_messages = messages[-4:] if len(messages) > 4 else messages
+    recent_text = "\n".join([
+        f"{'用户' if m['role'] == 'user' else '助手'}: {m['content'][:100]}{'...' if len(m['content']) > 100 else ''}"
+        for m in recent_messages
+    ])
+
+    parts = []
+    if conversation_summary:
+        parts.append(f"【对话摘要】\n{conversation_summary}")
+    if requirement_analysis:
+        parts.append(f"【需求分析】\n{requirement_analysis}")
+    parts.append(f"【最近对话】\n{recent_text}")
+    parts.append(f"【用户当前输入】\n{user_message}")
+
+    return "\n\n".join(parts)
+
+
+# ===== 统一响应生成节点（V1.3新增）=====
+
+RESPONSE_GENERATOR_PROMPT = """{system_prompt}
+
+# ═══════════════════════════════════════════════════════════
+# 统一上下文
+# ═══════════════════════════════════════════════════════════
+{unified_context}
 
 # 已确认的需求信息
 {extracted_requirements}
 
-# 待收集的字段（按优先级排序）
+# 待收集的字段
 {missing_fields}
 
-# 当前需要询问的字段
-当前字段：{next_field}
+# 下一个要询问的字段
+{next_field}
 
 字段说明：
-- genre: 题材类型（如战神、甜宠、都市情感等）
+- genre: 题材类型（战神、甜宠、都市情感等）
 - protagonist: 主角设定（身份、性格、特点）
-- conflict: 核心冲突（主线矛盾、主要挑战）
+- conflict: 核心冲突（主线矛盾）
 - target_audience: 目标受众（性别、年龄段）
 - episodes: 集数（默认80集）
 - style: 风格基调（爽文、虐恋、轻松等）
 
 # 任务
-针对当前字段，生成一个引导问题。要求：
-1. 结合已确认的信息，体现你对需求的理解
-2. 问题要具体、有针对性，避免泛泛而谈
-3. **禁止添加问候语和开场白**，直接问问题
-4. 语气专业亲切，像资深编辑与作者交流
-5. 问题末尾加上："如果您没有主意，回复'给我建议'我来帮您。"
+根据用户意图和当前状态，生成合适的回复：
 
-# 输出格式 (JSON)
-{{"next_field_to_ask": "字段名", "question_text": "问题内容", "internal_options_cache": ["建议1", "建议2", "建议3"]}}
+1. 如果用户回答了问题：确认理解，继续询问下一个缺失字段
+2. 如果用户提问：解答问题，并继续引导
+3. 如果用户闲聊：友好回应，自然引导回需求收集
 
-只输出JSON，不要有其他文字。"""
+要求：
+- 结合已确认信息，体现对需求的理解
+- 回复要自然流畅，像资深编辑与作者交流
+- 每次只问一个问题，聚焦明确
+- **禁止添加问候语**，直接进入正题
+- 如果还有缺失字段，末尾加上引导语
+- 引导语格式："如果您没有主意，回复'给我建议'我来帮您。"
+
+请直接输出回复文本，不要输出JSON或其他格式。"""
+
+
+async def response_generator_node(state: ScriptState) -> ScriptState:
+    """
+    统一响应生成节点（V1.3）
+
+    职责：根据意图和当前状态，生成统一回复
+    支持：确认回答、解答问题、闲聊引导、继续询问
+    """
+    # 检查 LLM 配置
+    is_configured, _ = check_llm_configured()
+    if not is_configured:
+        return state
+
+    # 获取需求信息
+    requirements = state.get("requirements", {})
+    missing_fields = get_missing_fields(requirements)
+
+    # 确定下一个要询问的字段
+    priority = ["genre", "protagonist", "conflict", "target_audience", "episodes", "style"]
+    next_field = None
+    for field in priority:
+        if field in missing_fields:
+            next_field = field
+            break
+    if not next_field and missing_fields:
+        next_field = missing_fields[0]
+
+    # 构建统一上下文
+    unified_context = build_unified_context_simple(state)
+
+    # 构建提示词
+    prompt = RESPONSE_GENERATOR_PROMPT.format(
+        system_prompt=CLARIFY_SYSTEM_PROMPT,
+        unified_context=unified_context,
+        extracted_requirements=json.dumps(requirements, ensure_ascii=False),
+        missing_fields=json.dumps(missing_fields, ensure_ascii=False),
+        next_field=next_field or "无"
+    )
+
+    # 初始化 LLM 服务
+    config = get_current_llm_config()
+    llm_config = LLMConfig(
+        provider=config.get("provider", "tongyi"),
+        api_key=config.get("apiKey"),
+        api_base=config.get("apiBase") or None,
+        model=config.get("model", "qwen-max"),
+        temperature=config.get("temperature", 0.7),
+        max_tokens=config.get("maxTokens", 4000)
+    )
+    llm_service = get_llm_service(llm_config)
+
+    # 生成回复
+    response_text = await llm_service.generate_with_retry(
+        prompt,
+        system_prompt=CLARIFY_SYSTEM_PROMPT,
+        max_tokens=500
+    )
+    response_text = response_text.strip()
+
+    # 确保引导语
+    if missing_fields and "如果您没有主意" not in response_text:
+        response_text += " 如果您没有主意，回复'给我建议'我来帮您。"
+
+    # 更新状态
+    message = {
+        "role": "assistant",
+        "content": response_text,
+        "type": "text"
+    }
+    messages = state.get("messages", [])
+    messages.append(message)
+    state["messages"] = messages
+    state["pending_field"] = next_field
+
+    logger.info(f"💬 [响应生成] 已生成回复，长度: {len(response_text)}字")
+    return state
+
+
+# ===== 流式统一响应生成器 =====
+
+STREAMING_RESPONSE_PROMPT = """{system_prompt}
+
+# ═══════════════════════════════════════════════════════════
+# 统一上下文
+# ═══════════════════════════════════════════════════════════
+{unified_context}
+
+# 已确认的需求信息
+{extracted_requirements}
+
+# 待收集的字段
+{missing_fields}
+
+# 下一个要询问的字段
+{next_field}
+
+# 任务
+根据用户意图和当前状态，生成自然流畅的回复：
+1. 确认用户回答（如果有）
+2. 继续引导下一个缺失字段
+3. 语气专业亲切，**禁止问候语**
+
+请直接输出回复文本。"""
+
+
+async def streaming_response_generator(
+    state: ScriptState,
+    on_chunk: callable
+) -> ScriptState:
+    """
+    流式统一响应生成器
+
+    实时生成响应并推送
+    """
+    is_configured, _ = check_llm_configured()
+    if not is_configured:
+        return state
+
+    requirements = state.get("requirements", {})
+    missing_fields = get_missing_fields(requirements)
+
+    priority = ["genre", "protagonist", "conflict", "target_audience", "episodes", "style"]
+    next_field = None
+    for field in priority:
+        if field in missing_fields:
+            next_field = field
+            break
+    if not next_field and missing_fields:
+        next_field = missing_fields[0]
+
+    unified_context = build_unified_context_simple(state)
+
+    prompt = STREAMING_RESPONSE_PROMPT.format(
+        system_prompt=CLARIFY_SYSTEM_PROMPT,
+        unified_context=unified_context,
+        extracted_requirements=json.dumps(requirements, ensure_ascii=False),
+        missing_fields=json.dumps(missing_fields, ensure_ascii=False),
+        next_field=next_field or "无"
+    )
+
+    config = get_current_llm_config()
+    llm_config = LLMConfig(
+        provider=config.get("provider", "tongyi"),
+        api_key=config.get("apiKey"),
+        api_base=config.get("apiBase") or None,
+        model=config.get("model", "qwen-max"),
+        temperature=config.get("temperature", 0.7),
+        max_tokens=config.get("maxTokens", 4000)
+    )
+    llm_service = get_llm_service(llm_config)
+
+    full_content = ""
+    try:
+        async for chunk in llm_service.generate_stream(
+            prompt,
+            system_prompt=CLARIFY_SYSTEM_PROMPT,
+            max_tokens=500
+        ):
+            full_content += chunk
+            await on_chunk(chunk, full_content, False)
+
+        # 确保引导语
+        if missing_fields and "如果您没有主意" not in full_content:
+            extra = " 如果您没有主意，回复'给我建议'我来帮您。"
+            full_content += extra
+            await on_chunk(extra, full_content, True)
+        else:
+            await on_chunk("", full_content, True)
+
+        # 更新状态
+        message = {
+            "role": "assistant",
+            "content": full_content,
+            "type": "text"
+        }
+        messages = state.get("messages", [])
+        messages.append(message)
+        state["messages"] = messages
+        state["pending_field"] = next_field
+
+        logger.info(f"💬 [流式响应] 生成完成，长度: {len(full_content)}字")
+
+    except Exception as e:
+        logger.error(f"流式响应生成失败: {e}")
+        raise
+
+    return state
 
 
 def get_missing_fields(requirements: Dict[str, Any]) -> List[str]:
     """获取缺失的关键字段"""
     required_fields = ["genre", "protagonist", "conflict", "target_audience", "episodes", "style"]
     return [f for f in required_fields if f not in requirements or not requirements[f]]
+
+
+# ===== V1.3 异步评估函数 =====
+
+ASSESS_PROGRESS_PROMPT = """{system_prompt}
+
+# ═══════════════════════════════════════════════════════════
+# 统一上下文（包含本轮回复）
+# ═══════════════════════════════════════════════════════════
+{unified_context}
+
+# 已提取的需求字段
+{extracted_requirements}
+
+# ═══════════════════════════════════════════════════════════
+# 任务：评估需求收集进度
+# ═══════════════════════════════════════════════════════════
+
+对每个需求字段进行评估，输出 JSON 格式：
+{{
+    "completeness": 0-100的总分,
+    "assessment": {{
+        "genre": {{"status": "empty/partial/confirmed", "understanding": "当前理解的描述", "confidence": 0.0-1.0, "suggestion": "可选的改进建议"}},
+        "protagonist": {{...}},
+        "conflict": {{...}},
+        "target_audience": {{...}},
+        "episodes": {{...}},
+        "style": {{...}}
+    }}
+}}
+
+字段状态说明：
+- empty: 完全没有信息
+- partial: 有部分信息但不完整
+- confirmed: 信息已确认且完整
+
+评分规则：
+- genre (题材): 20分
+- protagonist (主角): 20分
+- conflict (冲突): 20分
+- target_audience (受众): 15分
+- episodes (集数): 15分
+- style (风格): 10分
+
+只输出JSON，不要其他文字。"""
+
+
+async def assess_progress_after_response(state: ScriptState) -> Dict[str, Any]:
+    """
+    V1.3 异步评估函数
+
+    在回复生成完成后异步执行，评估需求收集进度并返回结果
+    用于通过 assessment_update SSE 事件推送到前端
+
+    Args:
+        state: 当前状态（已包含本轮回复）
+
+    Returns:
+        包含 completeness 和 requirement_assessment 的字典
+    """
+    logger.info("📊 [异步评估] 开始评估需求收集进度...")
+
+    # 检查 LLM 配置
+    is_configured, _ = check_llm_configured()
+    if not is_configured:
+        return {
+            "completeness": state.get("completeness", 0),
+            "requirement_assessment": None
+        }
+
+    requirements = state.get("requirements", {})
+
+    # 构建统一上下文（包含本轮回复）
+    unified_context = build_unified_context_simple(state)
+
+    # 初始化 LLM 服务
+    config = get_current_llm_config()
+    llm_config = LLMConfig(
+        provider=config.get("provider", "tongyi"),
+        api_key=config.get("apiKey"),
+        api_base=config.get("apiBase") or None,
+        model=config.get("model", "qwen-max"),
+        temperature=config.get("temperature", 0.5),  # 评估用较低温度
+        max_tokens=config.get("maxTokens", 4000)
+    )
+    llm_service = get_llm_service(llm_config)
+
+    # 构建提示词
+    prompt = ASSESS_PROGRESS_PROMPT.format(
+        system_prompt=CLARIFY_SYSTEM_PROMPT,
+        unified_context=unified_context,
+        extracted_requirements=json.dumps(requirements, ensure_ascii=False)
+    )
+
+    try:
+        # 调用 LLM 进行评估
+        response = await llm_service.generate_with_retry(
+            prompt,
+            system_prompt=CLARIFY_SYSTEM_PROMPT,
+            max_tokens=800
+        )
+
+        # 解析 JSON 响应
+        success, result = parse_llm_json_response(
+            response,
+            expected_fields=["completeness", "assessment"]
+        )
+
+        if success and isinstance(result, dict):
+            completeness = result.get("completeness", 0)
+            assessment = result.get("assessment", {})
+
+            logger.info(f"📊 [异步评估] 完成，完整度: {completeness}%")
+
+            return {
+                "completeness": completeness,
+                "requirement_assessment": assessment
+            }
+        else:
+            # 解析失败，使用基础计算
+            logger.warning(f"📊 [异步评估] JSON解析失败，使用基础计算")
+            return {
+                "completeness": check_requirement_completeness(requirements),
+                "requirement_assessment": None
+            }
+
+    except Exception as e:
+        logger.error(f"📊 [异步评估] 评估失败: {e}")
+        return {
+            "completeness": check_requirement_completeness(requirements),
+            "requirement_assessment": None
+        }
 
 
 async def guidance_generator_node(state: ScriptState) -> ScriptState:

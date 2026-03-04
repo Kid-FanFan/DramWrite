@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Check, AlertCircle, HardDrive, Save, RotateCcw } from 'lucide-react'
+import { Check, AlertCircle, Save, RotateCcw } from 'lucide-react'
 
 const LLM_PROVIDERS = [
   { id: 'tongyi', name: '通义千问' },

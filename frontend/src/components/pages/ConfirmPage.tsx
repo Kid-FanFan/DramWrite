@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useProjectStore } from '../../stores/projectStore'
-import { CheckCircle, Edit3, Rocket, ArrowLeft, FileText, Users, Target, Hash, Palette, Loader2, Sparkles } from 'lucide-react'
+import { ArrowLeft, Rocket, RefreshCw, Loader2, User, Swords, BookOpen, Globe, Heart, Palette, DollarSign, Sparkles, FileText, CheckCircle } from 'lucide-react'
 import type { RequirementConfirmation } from '../../types'
 
 // API 调用
@@ -9,6 +9,14 @@ const confirmAPI = {
   // 获取AI优化后的需求确认书
   getRequirementSummary: async (projectId: string) => {
     const response = await fetch(`/api/v1/projects/${projectId}/requirement-summary`)
+    return await response.json()
+  },
+  // 重新生成确认书
+  regenerateConfirmation: async (projectId: string) => {
+    const response = await fetch(`/api/v1/projects/${projectId}/regenerate-confirmation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
     return await response.json()
   },
   confirm: async (projectId: string, confirmed: boolean = true) => {
@@ -28,34 +36,67 @@ const confirmAPI = {
   }
 }
 
+// 信息卡片组件
+interface InfoCardProps {
+  icon: React.ReactNode
+  title: string
+  children: React.ReactNode
+  className?: string
+  highlight?: boolean
+}
+
+function InfoCard({ icon, title, children, className = '', highlight = false }: InfoCardProps) {
+  return (
+    <div className={`bg-white rounded-xl border ${highlight ? 'border-primary/30 ring-1 ring-primary/10' : 'border-gray-200'} p-6 ${className}`}>
+      <div className="flex items-center gap-3 mb-4">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${highlight ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-600'}`}>
+          {icon}
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+      </div>
+      <div className="text-gray-700 leading-relaxed">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// 判断是否为恋爱类题材
+function isRomanceGenre(genre: string): boolean {
+  if (!genre) return false
+  const romanceKeywords = ['恋爱', '甜宠', '虐恋', '情感', '爱情', '言情', ' romantic', 'romance']
+  return romanceKeywords.some(keyword => genre.toLowerCase().includes(keyword.toLowerCase()))
+}
+
 function ConfirmPage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
-  const { getProject, updateProject, fetchProject } = useProjectStore()
+  const { getProject, updateProject } = useProjectStore()
   const project = getProject(id || '')
 
   const [isLoading, setIsLoading] = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
   const [error, setError] = useState('')
   const [confirmation, setConfirmation] = useState<RequirementConfirmation | null>(null)
-  const [isGeneratingSummary, setIsGeneratingSummary] = useState(true)
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
-  // 页面加载时获取AI优化后的需求确认书
+  // 页面加载时获取需求确认书
   useEffect(() => {
     if (id) {
-      fetchProject(id).then(() => {
-        loadRequirementSummary()
-      })
+      loadRequirementSummary()
     }
   }, [id])
 
   const loadRequirementSummary = async () => {
     if (!id) return
-    setIsGeneratingSummary(true)
+    setPageLoading(true)
+    setError('') // 清除之前的错误
     try {
       const response = await confirmAPI.getRequirementSummary(id)
       if (response.code === 200 && response.data?.confirmation) {
         setConfirmation(response.data.confirmation)
+        // 同步到项目 store
+        updateProject(id, { requirementConfirmation: response.data.confirmation })
       } else {
         setError(response.message || '生成需求确认书失败')
       }
@@ -63,8 +104,28 @@ function ConfirmPage() {
       console.error('获取需求确认书失败:', err)
       setError('网络错误，请重试')
     } finally {
-      setIsGeneratingSummary(false)
       setPageLoading(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!id) return
+    setIsRegenerating(true)
+    setError('')
+    try {
+      const response = await confirmAPI.regenerateConfirmation(id)
+      if (response.code === 200 && response.data?.confirmation) {
+        setConfirmation(response.data.confirmation)
+        // 同步到项目 store
+        updateProject(id, { requirementConfirmation: response.data.confirmation })
+      } else {
+        setError(response.message || '重新生成失败')
+      }
+    } catch (err) {
+      console.error('重新生成确认书失败:', err)
+      setError('网络错误，请重试')
+    } finally {
+      setIsRegenerating(false)
     }
   }
 
@@ -82,12 +143,14 @@ function ConfirmPage() {
       }
 
       // 更新本地状态
-      updateProject(project?.id || '', {
-        status: 'creating',
-        requirements_locked: true,
-        storyTitle: confirmation?.title || project?.name,
-        totalEpisodes: parseInt(confirmation?.episodes || '80', 10)
-      })
+      if (confirmation) {
+        updateProject(project?.id || '', {
+          status: 'creating',
+          requirementsLocked: true,
+          storyTitle: confirmation.title || project?.name,
+          totalEpisodes: parseInt(confirmation.episodes || '80', 10)
+        })
+      }
 
       // 第2步：开始创作（后台异步执行）
       const startResponse = await confirmAPI.startCreation(project?.id || '')
@@ -111,9 +174,9 @@ function ConfirmPage() {
     navigate(`/project/${id}/clarify`)
   }
 
-  if (pageLoading || isGeneratingSummary) {
+  if (pageLoading) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="card text-center py-16">
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="w-12 h-12 text-primary animate-spin" />
@@ -144,7 +207,7 @@ function ConfirmPage() {
 
   if (!confirmation) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="card text-center py-12">
           <p className="text-red-500 mb-4">{error || '生成需求确认书失败'}</p>
           <button
@@ -159,265 +222,199 @@ function ConfirmPage() {
     )
   }
 
+  // 判断是否为恋爱类题材
+  const showRomanceLine = isRomanceGenre(confirmation.genre)
+
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* 头部 */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleBack}
-            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            aria-label="返回"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h1 className="text-xl font-semibold">{project.name}</h1>
-            <p className="text-sm text-gray-500">需求确认书</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-          <Sparkles className="w-4 h-4" />
-          <span>AI智能生成</span>
-        </div>
-      </div>
-
-      {/* 确认书内容 */}
-      <div className="card space-y-8">
-        {/* 标题 */}
-        <div className="text-center pb-6 border-b">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-            <CheckCircle className="w-8 h-8 text-green-600" />
-          </div>
-          <h2 className="text-2xl font-bold mb-2">📜 需求确认书</h2>
-          <p className="text-gray-500">
-            以下是AI根据我们的对话为您整理的专业需求文档
-          </p>
-        </div>
-
-        {/* 剧名 */}
-        <div className="bg-gradient-to-r from-primary/5 to-primary/10 rounded-lg p-6">
-          <h3 className="text-lg font-bold text-primary mb-1">{confirmation.title}</h3>
-          <p className="text-sm text-gray-600">{confirmation.genre} · {confirmation.episodes}集</p>
-        </div>
-
-        {/* 基础信息 */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-primary" />
-            基础信息
-          </h3>
-          <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-            <div className="flex justify-between py-2 border-b border-gray-200">
-              <span className="text-gray-600">题材</span>
-              <span className="font-medium">{confirmation.genre || '待补充'}</span>
-            </div>
-            <div className="flex justify-between py-2 border-b border-gray-200">
-              <span className="text-gray-600">集数</span>
-              <span className="font-medium">{confirmation.episodes || '80'} 集</span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-gray-600">目标受众</span>
-              <span className="font-medium">{confirmation.target_audience || '待补充'}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 核心人物 */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Users className="w-5 h-5 text-primary" />
-            核心人物
-          </h3>
-          <div className="bg-gray-50 rounded-lg p-4 space-y-4">
-            {/* 主角 */}
-            {confirmation.protagonist && (
-              <div className="border-b border-gray-200 pb-4 last:border-0 last:pb-0">
-                <h4 className="font-medium text-gray-800 mb-2">
-                  主角：{confirmation.protagonist.name || '待命名'}
-                </h4>
-                <div className="text-sm text-gray-600 space-y-1">
-                  {confirmation.protagonist.identity && (
-                    <p><span className="text-gray-400">身份：</span>{confirmation.protagonist.identity}</p>
-                  )}
-                  {confirmation.protagonist.personality && (
-                    <p><span className="text-gray-400">性格：</span>{confirmation.protagonist.personality}</p>
-                  )}
-                  {confirmation.protagonist.background && (
-                    <p><span className="text-gray-400">背景：</span>{confirmation.protagonist.background}</p>
-                  )}
-                  {confirmation.protagonist.goal && (
-                    <p><span className="text-gray-400">目标：</span>{confirmation.protagonist.goal}</p>
-                  )}
-                  {confirmation.protagonist.golden_finger && (
-                    <p><span className="text-gray-400">特殊能力：</span>{confirmation.protagonist.golden_finger}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 配角 */}
-            {confirmation.supporting_roles && confirmation.supporting_roles.length > 0 && (
-              <div>
-                <h4 className="font-medium text-gray-700 mb-2">其他角色</h4>
-                <div className="space-y-2">
-                  {confirmation.supporting_roles.map((role, index) => (
-                    <div key={index} className="text-sm">
-                      <span className="font-medium">{role.name}</span>
-                      <span className="text-gray-400 mx-1">·</span>
-                      <span className="text-gray-600">{role.role_type}</span>
-                      {role.description && (
-                        <span className="text-gray-500"> - {role.description}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 剧情概要 */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
-            剧情概要
-          </h3>
-          <div className="bg-gray-50 rounded-lg p-4">
-            {confirmation.plot_summary ? (
-              <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                {confirmation.plot_summary}
-              </p>
-            ) : (
-              <p className="text-gray-400 italic">剧情概要待补充</p>
-            )}
-          </div>
-        </div>
-
-        {/* 核心冲突 */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
-            核心冲突
-          </h3>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-gray-700">{confirmation.core_conflict || '待补充'}</p>
-          </div>
-        </div>
-
-        {/* 风格基调 */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Palette className="w-5 h-5 text-primary" />
-            风格基调
-          </h3>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-gray-700">{confirmation.style || '待补充'}</p>
-          </div>
-        </div>
-
-        {/* 卖点 */}
-        {confirmation.selling_points && confirmation.selling_points.length > 0 && (
-          <div>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-primary" />
-              核心卖点
-            </h3>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <ul className="space-y-2">
-                {confirmation.selling_points.map((point, index) => (
-                  <li key={index} className="flex items-start gap-2 text-gray-700">
-                    <span className="text-primary font-medium">{index + 1}.</span>
-                    <span>{point}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* 特殊要求 */}
-        {confirmation.special_requirements && (
-          <div>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Hash className="w-5 h-5 text-primary" />
-              特殊要求
-            </h3>
-            <div className="bg-yellow-50 rounded-lg p-4">
-              <p className="text-gray-700">{confirmation.special_requirements}</p>
-            </div>
-          </div>
-        )}
-
-        {/* 完整度 */}
-        <div className="bg-blue-50 rounded-lg p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Hash className="w-5 h-5 text-blue-600" />
-            <span className="font-medium text-blue-900">需求完整度</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="w-32 h-2 bg-blue-200 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-600 transition-all duration-300"
-                style={{ width: `${project.completeness}%` }}
-              />
-            </div>
-            <span className="font-semibold text-blue-900">{project.completeness}%</span>
-          </div>
-        </div>
-
-        {/* 提示信息 */}
-        {project.completeness < 80 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">
-            <p className="text-sm">
-              ⚠️ 需求完整度不足 80%，建议返回完善需求信息，以获得更好的创作效果。
-            </p>
-          </div>
-        )}
-
-        {/* 错误提示 */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
-            <p className="text-sm">{error}</p>
-          </div>
-        )}
-
-        {/* 操作按钮 */}
-        <div className="flex items-center justify-between pt-6 border-t">
+    <div className="max-w-6xl mx-auto">
+      {/* 顶部操作栏 */}
+      <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-gray-200 py-4 mb-6">
+        <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={handleBack}
             className="btn-secondary flex items-center gap-2"
           >
-            <Edit3 className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" />
             返回修改
           </button>
 
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={isLoading}
-            className="btn-primary flex items-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <span className="animate-spin">⏳</span>
-                处理中...
-              </>
-            ) : (
-              <>
-                <Rocket className="w-4 h-4" />
-                确认，开始创作
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleRegenerate}
+              disabled={isRegenerating}
+              className="btn-secondary flex items-center gap-2"
+            >
+              {isRegenerating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              重新生成
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={isLoading}
+              className="btn-primary flex items-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  处理中...
+                </>
+              ) : (
+                <>
+                  <Rocket className="w-4 h-4" />
+                  开始创作
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 错误提示 */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800 mb-6">
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* 主内容区 - 卡片布局 */}
+      <div className="space-y-6 pb-12">
+        {/* 顶部标题卡 */}
+        <div className="bg-gradient-to-r from-primary/5 to-primary/10 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center">
+              <CheckCircle className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                《{confirmation.title}》
+              </h1>
+              <p className="text-gray-600">
+                {confirmation.genre} · {confirmation.episodes}集 · {confirmation.target_audience}
+              </p>
+            </div>
+          </div>
         </div>
 
-        {/* 说明 */}
-        <p className="text-center text-sm text-gray-500">
-          💡 确认后将锁定需求，进入自动化剧本创作流程
-        </p>
+        {/* 第一行：主角设定 + 核心冲突 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <InfoCard icon={<User className="w-5 h-5" />} title="主角设定" highlight>
+            <p>{confirmation.protagonist_summary}</p>
+          </InfoCard>
+
+          <InfoCard icon={<Swords className="w-5 h-5" />} title="核心冲突" highlight>
+            <p>{confirmation.core_conflict_summary}</p>
+          </InfoCard>
+        </div>
+
+        {/* 剧情规划 - 重点突出 */}
+        <InfoCard icon={<BookOpen className="w-5 h-5" />} title="剧情规划" highlight>
+          <p>{confirmation.plot_summary}</p>
+        </InfoCard>
+
+        {/* 第二行：世界观 + 感情线（条件显示） */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <InfoCard icon={<Globe className="w-5 h-5" />} title="世界观设定">
+            <p>{confirmation.world_building_summary}</p>
+          </InfoCard>
+
+          {showRomanceLine ? (
+            <InfoCard icon={<Heart className="w-5 h-5" />} title="感情线设计" className="bg-pink-50/50 border-pink-200">
+              <p>{confirmation.romance_line_summary}</p>
+            </InfoCard>
+          ) : (
+            <InfoCard icon={<Heart className="w-5 h-5" />} title="感情线设计" className="opacity-60">
+              <p className="text-gray-400 italic">该题材不涉及感情线</p>
+            </InfoCard>
+          )}
+        </div>
+
+        {/* 第三行：风格基调 + 付费卡点 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <InfoCard icon={<Palette className="w-5 h-5" />} title="风格基调">
+            <p>{confirmation.style_summary}</p>
+          </InfoCard>
+
+          <InfoCard icon={<DollarSign className="w-5 h-5" />} title="付费卡点设计" className="bg-amber-50/50 border-amber-200">
+            <p>{confirmation.checkpoint_summary}</p>
+          </InfoCard>
+        </div>
+
+        {/* 核心卖点 */}
+        <InfoCard icon={<Sparkles className="w-5 h-5" />} title="核心卖点">
+          <div className="flex flex-wrap gap-2">
+            {confirmation.selling_points?.map((point, index) => (
+              <span
+                key={index}
+                className="px-3 py-1.5 bg-primary/10 text-primary rounded-full text-sm font-medium"
+              >
+                {point}
+              </span>
+            ))}
+          </div>
+        </InfoCard>
+
+        {/* 特殊说明 */}
+        {confirmation.special_notes && (
+          <InfoCard icon={<FileText className="w-5 h-5" />} title="特殊说明">
+            <p>{confirmation.special_notes}</p>
+          </InfoCard>
+        )}
+
+        {/* 底部操作栏 */}
+        <div className="mt-12 pt-6 border-t border-gray-200 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            返回修改
+          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleRegenerate}
+              disabled={isRegenerating}
+              className="btn-secondary flex items-center gap-2"
+            >
+              {isRegenerating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              重新生成
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={isLoading}
+              className="btn-primary flex items-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  处理中...
+                </>
+              ) : (
+                <>
+                  <Rocket className="w-4 h-4" />
+                  开始创作
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* 提示信息 */}
+        <div className="p-4 bg-blue-50 rounded-lg text-sm text-blue-700">
+          <p>💡 确认后将锁定需求，进入自动化创作流程。如需修改请返回调整。</p>
+        </div>
       </div>
     </div>
   )

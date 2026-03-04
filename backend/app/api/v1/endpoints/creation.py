@@ -21,6 +21,28 @@ router = APIRouter()
 # 存储正在运行的创作任务
 _creation_tasks: dict[str, asyncio.Task] = {}
 
+# V1.2新增：存储创作调试日志（内存存储，每个项目最多保留100条）
+_creation_logs: dict[str, list] = {}
+
+
+def add_creation_log(project_id: str, message: str):
+    """添加创作日志"""
+    import time
+    if project_id not in _creation_logs:
+        _creation_logs[project_id] = []
+
+    timestamp = time.strftime("%H:%M:%S")
+    _creation_logs[project_id].append(f"[{timestamp}] {message}")
+
+    # 只保留最近100条
+    if len(_creation_logs[project_id]) > 100:
+        _creation_logs[project_id] = _creation_logs[project_id][-100:]
+
+
+def get_creation_logs(project_id: str) -> list:
+    """获取创作日志"""
+    return _creation_logs.get(project_id, [])
+
 
 class CreationProgressResponse(BaseModel):
     """创作进度响应"""
@@ -59,8 +81,20 @@ async def _run_creation_background(project_id: str, project: dict):
         project["status"] = "creating"
         ProjectService.update_project(project_id, project)
 
+        # V1.2新增：初始化调试日志
+        _creation_logs[project_id] = []
+        add_creation_log(project_id, f"🎬 创作流程启动 - 总集数: {total_episodes}")
+
+        # 获取需求确认书信息用于日志
+        confirmation = project.get("requirement_confirmation", {})
+        add_creation_log(project_id, f"📋 需求确认书: {confirmation.get('title', '未命名')}")
+        add_creation_log(project_id, f"🎭 题材: {confirmation.get('genre', '未设定')}")
+        add_creation_log(project_id, f"💖 感情线: {'有' if confirmation.get('romance_line_summary') else '无'}")
+        add_creation_log(project_id, f"🌍 世界观: {'有' if confirmation.get('world_building_summary') else '无'}")
+
         # 第1步：生成故事梗概
         logger.info(f"[{project_id}] 开始生成故事梗概")
+        add_creation_log(project_id, "▶️ 步骤1: 故事梗概生成...")
         project["creation_progress"]["step"] = "synopsis"
         project["creation_progress"]["percentage"] = 5
         ProjectService.update_project(project_id, project)
@@ -71,6 +105,15 @@ async def _run_creation_background(project_id: str, project: dict):
         project["creation_progress"]["percentage"] = 10
         ProjectService.update_project(project_id, project)
         logger.info(f"[{project_id}] 故事梗概生成完成")
+        add_creation_log(project_id, f"✅ 故事梗概完成 - 剧名: {project.get('story_title', '未命名')[:30]}...")
+        add_creation_log(project_id, f"   一句话: {project.get('one_liner', '')[:40]}...")
+
+        # 检查是否使用了需求确认书的信息
+        confirmation = project.get("requirement_confirmation", {})
+        if confirmation.get("title"):
+            add_creation_log(project_id, f"   使用需求确认书剧名: {confirmation['title']}")
+        else:
+            add_creation_log(project_id, "   未找到需求确认书剧名，使用AI生成")
 
         # 第2步：生成人物小传
         logger.info(f"[{project_id}] 开始生成人物小传")
@@ -84,6 +127,11 @@ async def _run_creation_background(project_id: str, project: dict):
         project["creation_progress"]["percentage"] = 20
         ProjectService.update_project(project_id, project)
         logger.info(f"[{project_id}] 人物小传生成完成")
+        chars = project.get("character_profiles", [])
+        add_creation_log(project_id, f"✅ 人物小传完成 - 共{len(chars)}个人物")
+        for char in chars[:3]:  # 显示前3个人物
+            add_creation_log(project_id, f"   • {char.get('name', '未知')} ({char.get('role', '角色')}) - {char.get('personality', '无性格')[:20]}...")
+
 
         # 第3步：生成分集大纲
         logger.info(f"[{project_id}] 开始生成分集大纲")
@@ -97,15 +145,22 @@ async def _run_creation_background(project_id: str, project: dict):
         project["creation_progress"]["percentage"] = 30
         ProjectService.update_project(project_id, project)
         logger.info(f"[{project_id}] 分集大纲生成完成")
+        outlines = project.get("episode_outlines", [])
+        add_creation_log(project_id, f"✅ 分集大纲完成 - 共{len(outlines)}集")
+        # 统计付费卡点
+        checkpoints = [o for o in outlines if o.get("is_checkpoint")]
+        add_creation_log(project_id, f"   付费卡点: 第{', '.join([str(o.get('episode_number')) for o in checkpoints[:5]])}...等{len(checkpoints)}个")
 
         # 第4步：生成剧本正文（增强上下文管理版）
         logger.info(f"[{project_id}] 开始生成剧本正文（带上下文管理）")
+        add_creation_log(project_id, "▶️ 步骤4: 剧本正文生成...")
 
         # 初始化剧本上下文
         from app.agents.create.nodes import initialize_script_context
         if not project.get("script_context"):
             project = initialize_script_context(project)
             logger.info(f"[{project_id}] 剧本上下文已初始化")
+            add_creation_log(project_id, "📝 剧本上下文已初始化")
 
         # 安全地获取数据（防止None值）
         outlines = project.get("episode_outlines") or []
@@ -117,6 +172,7 @@ async def _run_creation_background(project_id: str, project: dict):
             raise ValueError("分集大纲为空，无法生成剧本")
 
         logger.info(f"[{project_id}] 大纲集数: {total_episodes}, 已有剧本: {len(scripts)}集")
+        add_creation_log(project_id, f"🎯 开始生成剧本 - 共{total_episodes}集，批次大小: 5集")
 
         # 批量生成剧本，但每5集保存一次状态
         batch_size = 5
@@ -129,6 +185,7 @@ async def _run_creation_background(project_id: str, project: dict):
             current_project = ProjectService.get_project(project_id)
             if current_project and current_project.get("status") == "paused":
                 logger.info(f"[{project_id}] 创作已暂停（在第{batch_start}集后）")
+                add_creation_log(project_id, f"⏸️ 创作已暂停（在第{batch_start}集后）")
                 return
 
             # 生成本批次剧本
@@ -154,8 +211,22 @@ async def _run_creation_background(project_id: str, project: dict):
             pending_hooks = script_ctx.get('pending_hooks', [])
             logger.info(f"[{project_id}] 当前上下文 - 待回收悬念：{len(pending_hooks)}个")
 
+            # V1.2新增：添加详细日志
+            add_creation_log(project_id, f"📝 剧本进度: {completed_count}/{total_episodes}集 ({progress_percent}%)")
+            if pending_hooks:
+                add_creation_log(project_id, f"   待回收悬念: {len(pending_hooks)}个")
+            # 记录本批次生成的剧集
+            batch_scripts = project.get("scripts", [])[batch_start:batch_end]
+            for script in batch_scripts:
+                ep_num = script.get("episode_number", 0)
+                word_count = script.get("word_count", 0)
+                is_checkpoint = "【付费卡点" in script.get("content", "")
+                cp_mark = " 💰" if is_checkpoint else ""
+                add_creation_log(project_id, f"   第{ep_num}集: {word_count}字{cp_mark}")
+
         # 第5步：质量检查
         logger.info(f"[{project_id}] 开始质量检查")
+        add_creation_log(project_id, "▶️ 步骤5: 质量检查...")
         project["creation_progress"]["step"] = "quality_check"
         project["creation_progress"]["percentage"] = 95
         ProjectService.update_project(project_id, project)
@@ -163,6 +234,11 @@ async def _run_creation_background(project_id: str, project: dict):
         from app.agents.create.nodes import quality_checker_node
         result = quality_checker_node(project)
         project.update(result)
+
+        # 统计质量检查结果
+        scripts = project.get("scripts", [])
+        passed_count = sum(1 for s in scripts if s.get("quality_report", {}).get("pass", False))
+        add_creation_log(project_id, f"✅ 质量检查完成 - {passed_count}/{len(scripts)}集通过")
 
         # 完成
         project["status"] = "completed"
@@ -172,9 +248,12 @@ async def _run_creation_background(project_id: str, project: dict):
         ProjectService.update_project(project_id, project)
 
         logger.info(f"[{project_id}] 创作流程完成")
+        add_creation_log(project_id, "🎉 创作流程全部完成!")
+        add_creation_log(project_id, f"📊 总计: {len(scripts)}集剧本, {sum(s.get('word_count', 0) for s in scripts)}字")
 
     except Exception as e:
         logger.error(f"[{project_id}] 创作流程失败: {e}")
+        add_creation_log(project_id, f"❌ 创作流程失败: {str(e)[:100]}")
         project["status"] = "failed"
         project["creation_progress"]["status"] = "failed"
         project["creation_progress"]["error"] = str(e)
@@ -503,4 +582,28 @@ async def get_episode(project_id: str, episode_number: int):
         "code": 200,
         "message": "success",
         "data": episode
+    }
+
+
+@router.get("/{project_id}/create/logs", response_model=dict)
+async def api_get_creation_logs(project_id: str):
+    """
+    获取创作调试日志
+
+    Args:
+        project_id: 项目ID
+    """
+    project = ProjectService.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    logs = get_creation_logs(project_id)
+
+    return {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "logs": logs,
+            "count": len(logs)
+        }
     }

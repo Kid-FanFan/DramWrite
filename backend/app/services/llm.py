@@ -80,7 +80,7 @@ class LLMConfig:
         """转换为字典（脱敏）"""
         return {
             "provider": self.provider,
-            "api_key": self.api_key[:10] + "..." if self.api_key else "",
+            "api_key": self.api_key,
             "api_base": self.api_base,
             "model": self.model,
             "temperature": self.temperature,
@@ -119,18 +119,26 @@ class LLMService:
         Returns:
             生成的文本
         """
-        logger.info(f"调用 LLM: {self.config.provider}, model: {self.config.model}")
+        max_tokens = kwargs.get('max_tokens', self.config.max_tokens)
+        logger.info(f"🤖 [LLM调用] provider={self.config.provider}, model={self.config.model}")
+        logger.info(f"🤖 [LLM调用] max_tokens参数: 传入={kwargs.get('max_tokens')}, 配置={self.config.max_tokens}, 最终使用={max_tokens}")
 
+        start_time = time.time()
         try:
             if self.config.provider == LLMProvider.TONGYI:
-                return await self._call_tongyi(prompt, system_prompt, **kwargs)
+                result = await self._call_tongyi(prompt, system_prompt, **kwargs)
             elif self.config.provider == LLMProvider.OPENAI:
-                return await self._call_openai(prompt, system_prompt, **kwargs)
+                result = await self._call_openai(prompt, system_prompt, **kwargs)
             else:
                 # 其他模型使用 OpenAI 兼容格式
-                return await self._call_openai_compatible(prompt, system_prompt, **kwargs)
+                result = await self._call_openai_compatible(prompt, system_prompt, **kwargs)
+
+            elapsed = time.time() - start_time
+            logger.info(f"✅ [LLM响应] 耗时={elapsed:.2f}s, 响应长度={len(result)}字符")
+            return result
         except Exception as e:
-            logger.error(f"LLM 调用失败: {e}")
+            elapsed = time.time() - start_time
+            logger.error(f"❌ [LLM失败] 耗时={elapsed:.2f}s, 错误={e}")
             raise
 
     async def generate_stream(
@@ -181,14 +189,19 @@ class LLMService:
         """
         import asyncio
 
+        logger.info(f"🔄 [LLM重试] max_retries={max_retries}, kwargs={kwargs}")
+        logger.info(f"🔄 [LLM重试] self.config.max_tokens={self.config.max_tokens}")
         for attempt in range(max_retries):
             try:
                 return await self.generate(prompt, system_prompt, **kwargs)
             except Exception as e:
-                logger.warning(f"LLM 调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                logger.warning(f"⚠️ [LLM重试] 第{attempt + 1}/{max_retries}次失败: {e}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # 指数退避
+                    wait_time = 2 ** attempt
+                    logger.info(f"⏳ [LLM重试] 等待{wait_time}秒后重试...")
+                    await asyncio.sleep(wait_time)  # 指数退避
                 else:
+                    logger.error(f"❌ [LLM重试] 已达最大重试次数，放弃")
                     raise
 
         raise Exception("LLM 调用失败，已达最大重试次数")

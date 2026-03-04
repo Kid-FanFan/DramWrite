@@ -68,7 +68,7 @@ const contentAPI = {
 function EditorPage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
-  const { getProject, updateProject } = useProjectStore()
+  const { getProject } = useProjectStore()
   const project = getProject(id || '')
 
   const [activeTab, setActiveTab] = useState<TabType>('synopsis')
@@ -87,7 +87,7 @@ function EditorPage() {
   })
   const [characters, setCharacters] = useState<Character[]>([])
   const [outlines, setOutlines] = useState<Outline[]>([])
-  const [scripts, setScripts] = useState<Script[]>([])
+  const [_scripts, _setScripts] = useState<Script[]>([])
   const [currentScript, setCurrentScript] = useState<Script | null>(null)
 
   // 加载数据

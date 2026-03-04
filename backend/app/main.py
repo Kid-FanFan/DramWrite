@@ -1,6 +1,7 @@
 """
 FastAPI 应用入口
 """
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,6 +12,39 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import ScriptMasterException
 from app.api.v1.handlers import scriptmaster_exception_handler
+
+
+# ===== 配置日志 =====
+def setup_logging():
+    """配置 loguru 日志输出"""
+    # 移除默认的 handler
+    logger.remove()
+
+    # 添加控制台输出（彩色，简洁格式，立即刷新）
+    logger.add(
+        sys.stdout,
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+        level="INFO",
+        colorize=True,
+        enqueue=False,  # 禁用队列，直接输出
+    )
+
+    # 添加文件输出（详细格式）
+    logger.add(
+        "backend.log",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
+        level="DEBUG",
+        rotation="10 MB",
+        retention="7 days",
+        encoding="utf-8",
+        enqueue=False,
+    )
+
+    logger.info("日志系统初始化完成 - 控制台 + 文件输出已启用")
+
+
+# 初始化日志
+setup_logging()
 
 
 @asynccontextmanager

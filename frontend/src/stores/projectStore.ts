@@ -58,6 +58,11 @@ const convertBackendProject = (backendProject: any): Project => {
     updatedAt: backendProject.updated_at,
     requirements: backendProject.requirements || {},
     messages: backendProject.messages || [],
+    pendingField: backendProject.pending_field || backendProject.pendingField,
+    // V1.2 新增字段
+    requirementAssessment: backendProject.requirement_assessment || backendProject.requirementAssessment,
+    understandingDisplay: backendProject.understanding_display || backendProject.understandingDisplay,
+    understandingSummary: backendProject.understanding_summary || backendProject.understandingSummary,
     // 创作内容字段（snake_case -> camelCase），使用安全获取
     storySynopsis: backendProject.story_synopsis || backendProject.storySynopsis || '',
     storyTitle: backendProject.story_title || backendProject.storyTitle || '',

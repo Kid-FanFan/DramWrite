@@ -40,10 +40,10 @@ try {
 
 Write-Host ""
 Write-Host "Starting Uvicorn server..." -ForegroundColor Cyan
-Write-Host "API: http://localhost:8080" -ForegroundColor Cyan
-Write-Host "Docs: http://localhost:8080/docs" -ForegroundColor Cyan
+Write-Host "API: http://localhost:8000" -ForegroundColor Cyan
+Write-Host "Docs: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
 Write-Host ""
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --log-level info
