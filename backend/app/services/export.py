@@ -330,14 +330,6 @@ class ExportService:
                         bold=True,
                         space_before=Pt(6)
                     )
-                    appearance_text = "、".join([
-                        f"{appearance.get('height', '')}",
-                        f"{appearance.get('build', '')}",
-                        f"{appearance.get('hair', '')}",
-                        f"{appearance.get('clothing_style', '')}",
-                        f"{appearance.get('distinctive_features', '')}"
-                    ].filter(None)) if isinstance(appearance, dict) else str(appearance)
-
                     # 更安全的处理方式
                     appearance_parts = []
                     if appearance.get('height'):

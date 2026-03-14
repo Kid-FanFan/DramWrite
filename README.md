@@ -59,7 +59,7 @@
 - Node.js 18+
 - npm 或 yarn
 
-### 安装步骤
+### 一键部署（推荐）
 
 #### 1. 克隆仓库
 
@@ -68,7 +68,57 @@ git clone <repository-url>
 cd DramWrite
 ```
 
-#### 2. 配置后端
+#### 2. 运行部署脚本
+
+**Windows 用户：**
+
+```powershell
+# 一键部署（自动安装依赖）
+.\setup.bat
+
+# 一键启动
+.\start.bat
+```
+
+**macOS/Linux 用户：**
+
+```bash
+# 添加执行权限（首次使用）
+chmod +x setup.sh start.sh
+
+# 一键部署（自动安装依赖）
+./setup.sh
+
+# 一键启动
+./start.sh
+```
+
+#### 3. 配置 API 密钥
+
+编辑 `backend/.env` 文件，填入你的大模型 API 密钥：
+
+```env
+LLM_PROVIDER=tongyi
+LLM_API_KEY=your_api_key_here
+```
+
+支持：通义千问、文心一言、智谱 AI、OpenAI、Claude 等 10+ 模型
+
+#### 4. 访问应用
+
+- 前端界面: http://localhost:5173
+- 后端 API: http://localhost:8000
+- API 文档: http://localhost:8000/docs
+
+详细部署说明请查看 [DEPLOY.md](DEPLOY.md)
+
+---
+
+### 手动部署（备选方案）
+
+如果一键部署脚本无法使用，可以手动部署：
+
+#### 1. 配置后端
 
 ```bash
 cd backend
@@ -89,10 +139,9 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # 编辑 .env 文件，填入你的 API Key
-# LLM_API_KEY=your_api_key_here
 ```
 
-#### 3. 配置前端
+#### 2. 配置前端
 
 ```bash
 cd ../frontend
@@ -104,22 +153,13 @@ npm install
 cp .env.example .env
 ```
 
-#### 4. 启动服务
-
-**方式一：使用启动脚本（Windows PowerShell）**
-
-```powershell
-# 在项目根目录运行
-.\start-all.ps1
-```
-
-**方式二：分别启动**
+#### 3. 启动服务
 
 ```bash
 # 终端 1 - 启动后端
 cd backend
 venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
+source venv/bin/activate  # macOS/Linux
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # 终端 2 - 启动前端
@@ -127,7 +167,7 @@ cd frontend
 npm run dev
 ```
 
-#### 5. 访问应用
+#### 4. 访问应用
 
 打开浏览器访问: http://localhost:5173
 
