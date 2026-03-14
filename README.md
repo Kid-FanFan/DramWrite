@@ -18,6 +18,7 @@
 
 ## 功能特性
 
+### 核心功能
 - **🤖 智能需求澄清** - 对话式引导，将模糊创意转化为结构化需求
 - **📝 自动化剧本生产** - 流水线生成：故事梗概 → 人物小传 → 分集大纲 → 剧本正文
 - **✏️ 全流程可编辑** - 每个阶段支持人工修改和重新生成
@@ -25,19 +26,30 @@
 - **📤 多格式导出** - 支持 Word 文档导出，符合投稿标准
 - **🔌 多模型支持** - 支持通义千问、文心一言、Claude、OpenAI 等 10+ 模型
 
+### 短剧行业规范支持
+- **标准集数** - 80-100集（可配置30-120集）
+- **单集字数** - 600-800字标准，符合拍摄时长要求
+- **卡点设计** - 每10集设置强付费卡点
+- **格式规范** - 符合竖屏短剧投稿标准
+
 ## 技术栈
 
 ### 后端
-- **框架**: FastAPI
-- **AI 编排**: LangGraph + LangChain
-- **数据库**: SQLite
+- **框架**: FastAPI (异步 Web 框架)
+- **AI 编排**: LangGraph (状态机 + 智能体编排)
+- **LLM 接口**: LangChain + 多提供商适配
+- **数据库**: SQLite (本地) / PostgreSQL (云端)
+- **ORM**: SQLAlchemy
 - **文档生成**: python-docx
 
 ### 前端
 - **框架**: React 18 + TypeScript
 - **构建工具**: Vite
 - **样式**: Tailwind CSS
-- **状态管理**: Zustand
+- **状态管理**: Zustand (持久化到 localStorage)
+- **路由**: React Router
+- **HTTP 客户端**: Axios
+- **UI 组件**: 自定义组件 + Headless UI
 
 ## 快速开始
 
@@ -125,16 +137,35 @@ npm run dev
 DramWrite/
 ├── backend/                    # 后端服务
 │   ├── app/
-│   │   ├── api/v1/            # API 路由
-│   │   │   └── endpoints/     # 各功能端点
+│   │   ├── api/v1/endpoints/  # API 路由端点
 │   │   ├── agents/            # LangGraph 智能体
 │   │   │   ├── clarify/       # 需求澄清子图
-│   │   │   └── create/        # 剧本创作子图
-│   │   ├── core/              # 核心模块（配置、数据库）
-│   │   ├── models/            # 数据模型
-│   │   ├── services/          # 业务服务（LLM、导出）
-│   │   └── utils/             # 工具函数
-│   ├── data/                  # 数据库文件（git 忽略）
+│   │   │   │   ├── nodes.py
+│   │   │   │   ├── graph.py
+│   │   │   │   └── prompts/   # 需求澄清提示词
+│   │   │   ├── create/        # 剧本创作子图
+│   │   │   │   ├── nodes.py
+│   │   │   │   ├── graph.py
+│   │   │   │   └── prompts/   # 剧本创作提示词
+│   │   │   └── common/prompts/# 通用提示词
+│   │   ├── core/              # 核心模块
+│   │   │   ├── config.py      # 配置管理
+│   │   │   ├── database.py    # 数据库连接
+│   │   │   ├── exceptions.py  # 异常定义
+│   │   │   └── state.py       # ScriptState 状态定义
+│   │   ├── models/            # Pydantic 数据模型
+│   │   │   ├── chat.py
+│   │   │   ├── project.py
+│   │   │   ├── script.py
+│   │   │   └── settings.py
+│   │   ├── services/          # 业务服务
+│   │   │   ├── agent_service.py   # 智能体服务
+│   │   │   ├── llm.py             # LLM 统一接口
+│   │   │   ├── project_service.py # 项目管理
+│   │   │   └── export_service.py  # 导出服务
+│   │   └── main.py            # FastAPI 入口
+│   ├── data/                  # SQLite 数据库（git 忽略）
+│   ├── tests/                 # 测试代码
 │   ├── requirements.txt       # Python 依赖
 │   └── .env.example           # 环境变量模板
 │
@@ -144,17 +175,34 @@ DramWrite/
 │   │   │   ├── common/        # 通用组件
 │   │   │   ├── layout/        # 布局组件
 │   │   │   └── pages/         # 页面组件
+│   │   │       ├── HomePage.tsx
+│   │   │       ├── ClarifyPage.tsx
+│   │   │       ├── ConfirmPage.tsx
+│   │   │       ├── CreatePage.tsx
+│   │   │       └── EditorPage.tsx
 │   │   ├── hooks/             # 自定义 Hooks
 │   │   ├── stores/            # Zustand 状态管理
 │   │   ├── services/          # API 服务
 │   │   ├── types/             # TypeScript 类型定义
 │   │   └── utils/             # 工具函数
+│   ├── public/
 │   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
 │   └── .env.example           # 环境变量模板
 │
-├── docs/                       # 文档
-│   ├── 介绍文档V1.md
-│   ├── 使用文档V1.md
+├── .claude/rules/             # Claude Code 规则文档
+│   ├── 01-architecture.md     # 架构设计
+│   ├── 02-coding.md           # 编码规范
+│   ├── 03-prompts.md          # 提示词规范
+│   ├── 04-standards.md        # 短剧行业标准
+│   ├── 05-workflow.md         # 工作流设计
+│   ├── 06-api.md              # API 规范
+│   ├── 07-decisions.md        # 关键决策记录
+│   ├── 08-frontend-design.md  # 前端设计规范
+│   └── 09-development-plan.md # 开发计划
+│
+├── docs/                       # 产品文档
 │   └── ...
 │
 ├── .gitignore
@@ -203,6 +251,22 @@ LLM_MAX_TOKENS=4000           # 最大 Token 数
 
 ## 开发指南
 
+### Claude Code 规则文档
+
+本项目使用 Claude Code 进行开发，所有规则文档位于 `.claude/rules/` 目录：
+
+| 文档 | 内容 | 优先级 |
+|------|------|--------|
+| [01-architecture.md](.claude/rules/01-architecture.md) | 系统架构设计、模块职责、技术选型 | 高 |
+| [02-coding.md](.claude/rules/02-coding.md) | Python/TypeScript 编码规范、LangGraph 规范 | 高 |
+| [03-prompts.md](.claude/rules/03-prompts.md) | AI 节点提示词规范、提示词管理 | 高 |
+| [04-standards.md](.claude/rules/04-standards.md) | 竖屏短剧行业标准、投稿规范 | 高 |
+| [05-workflow.md](.claude/rules/05-workflow.md) | 双阶段工作流详细设计、节点实现 | 高 |
+| [06-api.md](.claude/rules/06-api.md) | RESTful API 规范、WebSocket 设计 | 中 |
+| [07-decisions.md](.claude/rules/07-decisions.md) | 关键决策记录 | 中 |
+| [08-frontend-design.md](.claude/rules/08-frontend-design.md) | 前端交互设计规范 | 中 |
+| [09-development-plan.md](.claude/rules/09-development-plan.md) | 6阶段开发计划 | 低 |
+
 ### API 文档
 
 启动后端后访问:
@@ -215,6 +279,7 @@ LLM_MAX_TOKENS=4000           # 最大 Token 数
 - 使用 4 空格缩进
 - 类型注解必填
 - 遵循 PEP 8 规范
+- 所有函数必须有 docstring
 
 **TypeScript/React**
 - 使用函数组件 + Hooks
@@ -258,6 +323,12 @@ pip install -r requirements.txt
 
 在应用中点击右上角「设置」按钮，选择模型提供商并填入对应的 API Key。
 
+### Q: 项目数据存储在哪里
+
+- **MVP 版本**: 数据存储在浏览器 localStorage 中
+- **数据保留期限**: 30 天
+- **导出备份**: 使用导出功能保存到本地文件
+
 ## 贡献指南
 
 1. Fork 本仓库
@@ -266,10 +337,16 @@ pip install -r requirements.txt
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 创建 Pull Request
 
+## 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|----------|
+| v1.1.5 | 2026-03-04 | 优化需求澄清节点，增强记忆管理 |
+| v1.0.0 | 2026-02-26 | MVP 版本发布 |
+
 ## 许可证
 
 暂无
-<!-- 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件 -->
 
 ## 致谢
 
@@ -282,6 +359,8 @@ pip install -r requirements.txt
 
 <div align="center">
 
-**剧作大师** - 让 AI 助你创作精彩短剧
+**剧作大师 ScriptMaster** - 让 AI 助你创作精彩短剧
+
+当前版本: v1.1.5
 
 </div>
